@@ -6,6 +6,7 @@ import {
   ArrowRight, Package, Users, Warehouse, Filter, RotateCcw, Building2,
   Eye, ChevronLeft, KeyRound, Smartphone, Unlock, LogOut, Link2, LayoutGrid, List as ListIcon, Wrench, AlertTriangle, BarChart3,
 } from "lucide-react";
+import * as db from "./db.js";
 
 /* ------------------------------------------------------------------ *
  *  Logiciel de gestion de parc — location de matériel médical
@@ -997,13 +998,32 @@ function Agenda({ store, archived, helpers }) {
 }
 
 /* ================== Ajout de tiers : matériel ================== */
-function TiersMateriel({ store, setStore, notify, helpers, etbId }) {
-  const { whName } = helpers;
+function TiersMateriel({ notify }) {
+  const [products, setProducts] = useState([]);
+  const [warehouses, setWarehouses] = useState([]);
+  const [etbId, setEtbId] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [codeFor, setCodeFor] = useState(null);
   const emptyForm = { name: "", numParc: "", numSerie: "", prix: "", category: "Fauteuil roulant", sub: "", parts: "", linked: [], warehouse: "", photo: null, pdf: null };
   const [f, setF] = useState(emptyForm);
+  const whName = (id) => warehouses.find((w) => w.id === id)?.name || "—";
+
+  // Charge les matériels + entrepôts depuis la base de données.
+  const reload = async () => {
+    setLoading(true);
+    try {
+      const [prods, whs, eid] = await Promise.all([
+        db.listProduits(), db.listEntrepots(), db.getEtablissementId(),
+      ]);
+      setProducts(prods); setWarehouses(whs); setEtbId(eid);
+    } catch (e) {
+      notify("Erreur de connexion à la base : " + e.message);
+    }
+    setLoading(false);
+  };
+  useEffect(() => { reload(); }, []);
 
   const SUBS = {
     "Fauteuil roulant": ["Manuel 4 roues", "Manuel 6 roues", "Électrique", "Confort / coquille", "Pédiatrique"],
@@ -1027,31 +1047,44 @@ function TiersMateriel({ store, setStore, notify, helpers, etbId }) {
     setOpen(true);
   };
 
-  const submit = () => {
+  const submit = async () => {
     const fields = {
       name: f.name, numParc: f.numParc, numSerie: f.numSerie, prix: f.prix,
       category: f.category, sub: f.sub || (SUBS[f.category]?.[0] ?? ""),
       parts: f.parts.split(",").map((x) => x.trim()).filter(Boolean), linked: f.linked, warehouse: f.warehouse, photo: f.photo, pdf: f.pdf,
     };
-    if (editing) {
-      setStore((s) => ({ ...s, products: s.products.map((p) => p.id === editing.id ? { ...p, ...fields } : p) }));
-      notify("Matériel modifié.");
-    } else {
-      const id = newId("PRD");
-      setStore((s) => ({ ...s, products: [{ id, ...fields, etb: etbId, archived: false }, ...s.products] }));
-      notify(`Matériel ${id} ajouté — code généré.`);
+    try {
+      if (editing) {
+        await db.updateProduit(editing.id, fields, etbId);
+        notify("Matériel modifié et enregistré.");
+      } else {
+        await db.createProduit(fields, etbId);
+        notify("Matériel ajouté et enregistré.");
+      }
+      await reload();
+    } catch (e) {
+      notify("Erreur d'enregistrement : " + e.message);
+      return;
     }
     setOpen(false); setF(emptyForm);
   };
-  const archive = (id) => { setStore((s) => ({ ...s, products: s.products.map((p) => p.id === id ? { ...p, archived: true } : p) })); notify("Matériel archivé."); };
+  const archive = async (id) => {
+    try {
+      await db.setProduitArchived(id, true);
+      notify("Matériel archivé.");
+      await reload();
+    } catch (e) {
+      notify("Erreur : " + e.message);
+    }
+  };
 
   return (
     <div>
-      <PageTitle title="Fauteuils / Matériels" sub={`${store.products.filter((p) => !p.archived).length} produit(s) au parc`}
+      <PageTitle title="Fauteuils / Matériels" sub={loading ? "Chargement depuis la base…" : `${products.filter((p) => !p.archived).length} produit(s) au parc`}
         action={<button onClick={openNew} className="inline-flex items-center gap-2 rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white hover:bg-teal-800"><Plus size={16} /> Ajouter un matériel</button>} />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {store.products.filter((p) => !p.archived).map((p) => (
+        {products.filter((p) => !p.archived).map((p) => (
           <div key={p.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="mb-3 flex items-start justify-between">
               <div className="flex items-center gap-3">
@@ -1080,7 +1113,7 @@ function TiersMateriel({ store, setStore, notify, helpers, etbId }) {
             {p.linked && p.linked.length > 0 && (
               <div className="mb-3 flex flex-wrap items-center gap-1 text-[11px] text-slate-500">
                 <Link2 size={11} className="text-teal-600" /> Associé à&nbsp;:
-                {p.linked.map((lid) => { const lp = store.products.find((x) => x.id === lid); return <span key={lid} className="rounded-full bg-teal-50 px-2 py-0.5 font-medium text-teal-700">{lp ? lp.name : lid}</span>; })}
+                {p.linked.map((lid) => { const lp = products.find((x) => x.id === lid); return <span key={lid} className="rounded-full bg-teal-50 px-2 py-0.5 font-medium text-teal-700">{lp ? lp.name : lid}</span>; })}
               </div>
             )}
             <div className="flex items-center justify-between border-t border-slate-100 pt-3">
@@ -1107,7 +1140,7 @@ function TiersMateriel({ store, setStore, notify, helpers, etbId }) {
             <Field label="Entrepôt de stockage">
               <select value={f.warehouse} onChange={(e) => set("warehouse", e.target.value)} className={inputCls}>
                 <option value="">Sélectionner…</option>
-                {store.warehouses.filter((w) => !w.archived).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+                {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
               </select>
             </Field>
           </div>
@@ -1142,8 +1175,8 @@ function TiersMateriel({ store, setStore, notify, helpers, etbId }) {
           <div className="sm:col-span-2">
             <Field label="Matériels associés (réservés ensemble)" hint="Sélectionnez d'autres matériels du parc : réserver celui-ci les réservera aussi automatiquement.">
               <div className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-slate-200 p-2">
-                {store.products.filter((p) => !p.archived && p.id !== editing?.id).length === 0 && <div className="px-1 py-2 text-xs text-slate-400">Aucun autre matériel dans le parc pour l'instant.</div>}
-                {store.products.filter((p) => !p.archived && p.id !== editing?.id).map((p) => {
+                {products.filter((p) => !p.archived && p.id !== editing?.id).length === 0 && <div className="px-1 py-2 text-xs text-slate-400">Aucun autre matériel dans le parc pour l'instant.</div>}
+                {products.filter((p) => !p.archived && p.id !== editing?.id).map((p) => {
                   const on = f.linked.includes(p.id);
                   return (
                     <button type="button" key={p.id} onClick={() => set("linked", on ? f.linked.filter((x) => x !== p.id) : [...f.linked, p.id])} className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm text-slate-700 hover:bg-slate-50">
