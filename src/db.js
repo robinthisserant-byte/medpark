@@ -93,3 +93,48 @@ export async function setProduitArchived(id, archived) {
   const { error } = await supabase.from("produits").update({ archived }).eq("id", id);
   if (error) throw error;
 }
+
+/* ------------------------------------------------------------------ *
+ *  TIERS SIMPLES : lieux de stockage (entrepots), patients, partenaires.
+ *  Ces 3 écrans se ressemblent, donc on les gère avec les mêmes fonctions,
+ *  en précisant juste le "kind" (le type).
+ * ------------------------------------------------------------------ */
+const TIERS = {
+  warehouses:  { table: "entrepots",   hasPartner: false },
+  partenaires: { table: "partenaires", hasPartner: false },
+  patients:    { table: "patients",    hasPartner: true  },
+};
+
+function tiersFromDb(r) {
+  return { id: r.id, name: r.nom, address: r.adresse || "", partenaire: r.partenaire_id || "" };
+}
+
+export async function listTiers(kind) {
+  const t = TIERS[kind];
+  const { data, error } = await supabase.from(t.table).select("*").eq("archived", false).order("nom");
+  if (error) throw error;
+  return (data || []).map(tiersFromDb);
+}
+
+export async function createTiers(kind, f, etbId) {
+  const t = TIERS[kind];
+  const row = { etablissement_id: etbId, nom: f.name, adresse: f.address || null };
+  if (t.hasPartner) row.partenaire_id = f.partenaire || null;
+  const { data, error } = await supabase.from(t.table).insert(row).select().single();
+  if (error) throw error;
+  return tiersFromDb(data);
+}
+
+export async function updateTiers(kind, id, f) {
+  const t = TIERS[kind];
+  const row = { nom: f.name, adresse: f.address || null };
+  if (t.hasPartner) row.partenaire_id = f.partenaire || null;
+  const { error } = await supabase.from(t.table).update(row).eq("id", id);
+  if (error) throw error;
+}
+
+export async function archiveTiers(kind, id) {
+  const t = TIERS[kind];
+  const { error } = await supabase.from(t.table).update({ archived: true }).eq("id", id);
+  if (error) throw error;
+}
