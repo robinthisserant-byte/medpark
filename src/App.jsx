@@ -13,11 +13,11 @@ import * as db from "./db.js";
  *  Prototype interactif (données en mémoire)
  * ------------------------------------------------------------------ */
 
-const TODAY = "2026-06-16";
-
 /* ---------- helpers ---------- */
 const pad = (n) => String(n).padStart(2, "0");
 const toISO = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+// Date du jour réelle (avant : date de démonstration figée au 16/06/2026).
+const TODAY = toISO(new Date());
 const parseISO = (s) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
 const fmtFR = (s) => { const d = parseISO(s); return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`; };
 const dayBefore = (s) => { const d = parseISO(s); d.setDate(d.getDate() - 1); return toISO(d); };
@@ -776,7 +776,7 @@ function Row({ label, value }) {
 /* ================== Réservations : nouvelle ================== */
 function ResNew({ notify, go }) {
   const [f, setF] = useState({ product: "", patient: "", warehouse: "", returnWh: "", start: "", end: "", note: "", pdf: null });
-  const [cal, setCal] = useState({ y: 2026, m: 5 });
+  const [cal, setCal] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
   const [qpOpen, setQpOpen] = useState(false);
   const [qp, setQp] = useState({ name: "", address: "" });
 
@@ -1031,7 +1031,7 @@ function ResArchive({ notify }) {
 function Agenda({ archived, notify }) {
   const [reservations, setReservations] = useState([]);
   const [products, setProducts] = useState([]);
-  const [cal, setCal] = useState({ y: 2026, m: 5 });
+  const [cal, setCal] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
   const [filterProducts, setFilterProducts] = useState([]);
   const [statusFilter, setStatusFilter] = useState("tous");
 
