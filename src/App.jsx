@@ -296,6 +296,7 @@ function MainApp({ store, setStore, access, mode, onExit }) {
   const [view, setView] = useState(NAV[0]?.subs[0]?.id || "res-list");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [showAcces, setShowAcces] = useState(false);
+  const [acTab, setAcTab] = useState("acces");
   const [toast, setToast] = useState(null);
 
   // Data is scoped to the current establishment: all accesses of the same
@@ -325,19 +326,24 @@ function MainApp({ store, setStore, access, mode, onExit }) {
           </div>
           <div className="px-4 py-4">
             <div className="mb-3 flex items-center gap-2.5">
-              <div className="grid h-9 w-9 place-items-center rounded-lg bg-teal-700 text-white"><KeyRound size={17} /></div>
+              <div className="grid h-9 w-9 place-items-center rounded-lg bg-teal-700 text-white"><Building2 size={17} /></div>
               <div className="min-w-0">
-                <div className="text-sm font-semibold text-slate-800">Espace accès</div>
+                <div className="text-sm font-semibold text-slate-800">Mon établissement</div>
                 <div className="truncate text-[11px] text-teal-700">{access.establishmentName}</div>
               </div>
             </div>
-            <div className="rounded-lg bg-teal-50 px-3 py-2 text-sm font-medium text-teal-800">Accès de l'établissement</div>
+            <div className="space-y-1">
+              <button onClick={() => setAcTab("acces")} className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm font-medium ${acTab === "acces" ? "bg-teal-50 text-teal-800" : "text-slate-600 hover:bg-slate-50"}`}><KeyRound size={16} className={acTab === "acces" ? "text-teal-600" : "text-slate-400"} /> Accès de l'établissement</button>
+              <button onClick={() => setAcTab("abonnement")} className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm font-medium ${acTab === "abonnement" ? "bg-teal-50 text-teal-800" : "text-slate-600 hover:bg-slate-50"}`}><CreditCard size={16} className={acTab === "abonnement" ? "text-teal-600" : "text-slate-400"} /> Mon abonnement</button>
+            </div>
           </div>
         </aside>
         <main className="flex-1 overflow-y-auto">
-          <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/90 px-4 py-3 text-sm text-slate-400 backdrop-blur md:px-6">Gestion des accès</header>
+          <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/90 px-4 py-3 text-sm text-slate-400 backdrop-blur md:px-6">{acTab === "abonnement" ? "Mon abonnement" : "Gestion des accès"}</header>
           <div className="px-4 py-6 md:px-8">
-            <GestionAcces store={store} setStore={setStore} notify={notify} etbId={etbId} />
+            {acTab === "abonnement"
+              ? <MonAbonnement store={store} setStore={setStore} notify={notify} etbId={etbId} />
+              : <GestionAcces store={store} setStore={setStore} notify={notify} etbId={etbId} />}
           </div>
         </main>
         {toast && <div className="fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-full bg-slate-900 px-4 py-2 text-sm text-white shadow-lg">{toast}</div>}
@@ -1878,6 +1884,91 @@ function GestionAcces({ store, setStore, notify, etbId }) {
         <div className="mt-5 flex justify-end gap-2">
           <button onClick={() => setOpen(false)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Annuler</button>
           <button disabled={!af.label.trim() || !af.identifiant.trim() || (af.mode === "custom" && af.sections.length === 0)} onClick={save} className="rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40">{editing ? "Enregistrer" : "Créer l'accès"}</button>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+/* ================== Mon abonnement (côté client) ================== */
+function MonAbonnement({ store, setStore, notify, etbId }) {
+  const etb = store.establishments.find((e) => e.id === etbId);
+  const sub = { ...DEFAULT_SUB, ...((etb && etb.subscription) || {}) };
+  const plan = planOf(sub.plan);
+  const st = SUB_STATUS[sub.status] || SUB_STATUS.actif;
+
+  const [open, setOpen] = useState(false);
+  const [choice, setChoice] = useState(sub.plan);
+
+  const setSub = (patch) =>
+    setStore((s) => ({ ...s, establishments: s.establishments.map((e) => e.id === etbId ? { ...e, subscription: { ...DEFAULT_SUB, ...(e.subscription || {}), ...patch } } : e) }));
+
+  const openChange = () => { setChoice(sub.plan); setOpen(true); };
+  const saveChange = () => {
+    setSub({ plan: choice, status: sub.status === "annule" ? "actif" : sub.status });
+    notify("Offre mise à jour.");
+    setOpen(false);
+  };
+  const resilier = () => { setSub({ status: "annule" }); notify("Abonnement résilié. Il reste actif jusqu'à l'échéance."); };
+  const reactiver = () => { setSub({ status: "actif" }); notify("Abonnement réactivé."); };
+
+  return (
+    <div>
+      <PageTitle title="Mon abonnement" sub="Votre offre MedPark, son statut et votre prochaine facturation." />
+
+      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-4">
+            <div className="grid h-14 w-14 place-items-center rounded-xl bg-teal-50 text-teal-700"><CreditCard size={26} /></div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-lg font-semibold text-slate-800">Offre {plan.label}</span>
+                <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${st.cls}`}>{st.label}</span>
+              </div>
+              <div className="text-sm text-slate-400">{plan.desc}</div>
+            </div>
+          </div>
+          <div className="text-right">
+            <div className="text-2xl font-semibold text-slate-800">{plan.price} €<span className="text-sm font-normal text-slate-400"> / mois</span></div>
+          </div>
+        </div>
+
+        <div className="mt-5 grid grid-cols-1 gap-3 border-t border-slate-100 pt-5 text-sm sm:grid-cols-2">
+          <div className="flex items-center gap-2 text-slate-500"><Calendar size={15} className="text-slate-400" /> Client depuis le <span className="font-medium text-slate-700">{fmtFR(sub.since)}</span></div>
+          <div className="flex items-center gap-2 text-slate-500">
+            <CalendarDays size={15} className="text-slate-400" />
+            {sub.status === "annule" ? "Prend fin à l'échéance en cours" : <>Prochain paiement le <span className="font-medium text-slate-700">{fmtFR(sub.nextBilling)}</span></>}
+          </div>
+        </div>
+
+        <div className="mt-5 flex flex-wrap gap-2 border-t border-slate-100 pt-5">
+          <button onClick={openChange} className="inline-flex items-center gap-2 rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white hover:bg-teal-800"><ArrowRight size={15} /> Changer d'offre</button>
+          {sub.status === "annule"
+            ? <button onClick={reactiver} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><RotateCcw size={15} /> Réactiver l'abonnement</button>
+            : <button onClick={resilier} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50"><X size={15} /> Résilier l'abonnement</button>}
+        </div>
+
+        <p className="mt-4 text-[11px] text-slate-400">Le paiement en ligne (carte bancaire, factures téléchargeables) sera activé prochainement. En attendant, pour toute question de facturation, contactez votre interlocuteur MedPark.</p>
+      </div>
+
+      <Modal open={open} onClose={() => setOpen(false)} title="Changer d'offre">
+        <div className="space-y-2">
+          {PLANS.map((p) => (
+            <label key={p.id} className={`flex cursor-pointer items-center justify-between gap-3 rounded-lg border px-3 py-2.5 ${choice === p.id ? "border-teal-500 bg-teal-50/50 ring-1 ring-teal-500" : "border-slate-200 hover:bg-slate-50"}`}>
+              <div className="flex items-center gap-3">
+                <input type="radio" name="monplan" checked={choice === p.id} onChange={() => setChoice(p.id)} className="accent-teal-600" />
+                <div>
+                  <div className="text-sm font-medium text-slate-800">{p.label} {p.id === sub.plan && <span className="text-xs font-normal text-slate-400">(offre actuelle)</span>}</div>
+                  <div className="text-xs text-slate-400">{p.desc}</div>
+                </div>
+              </div>
+              <div className="text-sm font-semibold text-slate-700">{p.price} €<span className="font-normal text-slate-400"> / mois</span></div>
+            </label>
+          ))}
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button onClick={() => setOpen(false)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Annuler</button>
+          <button disabled={choice === sub.plan} onClick={saveChange} className="rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40">Confirmer le changement</button>
         </div>
       </Modal>
     </div>
