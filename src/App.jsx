@@ -4,7 +4,7 @@ import {
   Search, ScanLine, ChevronDown, ChevronRight, X, FileText, QrCode,
   Shield, Check, Pencil, MapPin, Upload, CircleUser, Menu,
   ArrowRight, Package, Users, Warehouse, Filter, RotateCcw, Building2,
-  Eye, ChevronLeft, KeyRound, Smartphone, Unlock, LogOut, Link2, LayoutGrid, List as ListIcon, Wrench, AlertTriangle, BarChart3,
+  Eye, ChevronLeft, KeyRound, Smartphone, Unlock, LogOut, Link2, LayoutGrid, List as ListIcon, Wrench, AlertTriangle, BarChart3, CreditCard,
 } from "lucide-react";
 import * as db from "./db.js";
 
@@ -101,10 +101,27 @@ const SECTIONS = [
   { id: "stats", label: "Statistiques" },
   { id: "transport", label: "Transfert" },
 ];
+// Offres d'abonnement proposées aux établissements.
+const PLANS = [
+  { id: "essentiel", label: "Essentiel", price: 49,  desc: "Jusqu'à 100 matériels · 2 accès" },
+  { id: "pro",       label: "Pro",       price: 99,  desc: "Matériels illimités · 10 accès" },
+  { id: "illimite",  label: "Illimité",  price: 199, desc: "Tout illimité · support prioritaire" },
+];
+// États possibles d'un abonnement, avec leur style visuel.
+const SUB_STATUS = {
+  actif:     { label: "Actif",       cls: "bg-emerald-50 text-emerald-700 ring-emerald-600/20" },
+  essai:     { label: "Période d'essai", cls: "bg-sky-50 text-sky-700 ring-sky-600/20" },
+  suspendu:  { label: "Suspendu",    cls: "bg-amber-50 text-amber-700 ring-amber-600/20" },
+  annule:    { label: "Résilié",     cls: "bg-rose-50 text-rose-700 ring-rose-600/20" },
+};
+// Abonnement par défaut si un établissement n'en a pas encore.
+const DEFAULT_SUB = { plan: "pro", status: "essai", since: "2026-10-01", nextBilling: "2026-11-01" };
+const planOf = (id) => PLANS.find((p) => p.id === id) || PLANS[1];
+
 const seedEstablishments = [
-  { id: "ETB-01", name: "CHU de Paris", identifiant: "chu-paris", code: "CHP-4821", archived: false },
-  { id: "ETB-02", name: "Clinique du Parc — Lyon", identifiant: "clinique-parc-lyon", code: "CPL-3308", archived: false },
-  { id: "ETB-03", name: "Domicile Santé Lille", identifiant: "domicile-sante-lille", code: "DSL-9156", archived: false },
+  { id: "ETB-01", name: "CHU de Paris", identifiant: "chu-paris", code: "CHP-4821", archived: false, subscription: { plan: "illimite", status: "actif", since: "2026-01-15", nextBilling: "2026-11-15" } },
+  { id: "ETB-02", name: "Clinique du Parc — Lyon", identifiant: "clinique-parc-lyon", code: "CPL-3308", archived: false, subscription: { plan: "pro", status: "actif", since: "2026-03-01", nextBilling: "2026-11-01" } },
+  { id: "ETB-03", name: "Domicile Santé Lille", identifiant: "domicile-sante-lille", code: "DSL-9156", archived: false, subscription: { plan: "essentiel", status: "essai", since: "2026-09-20", nextBilling: "2026-10-20" } },
 ];
 const seedAccesses = [
   { id: "ACC-01", establishmentId: "ETB-01", label: "Service logistique", identifiant: "logistique", code: "LOG-2207", sections: ["reservations","agenda","tiers","inventaire","maintenance","stats","transport"], singleDevice: true, activeDevice: "Poste-2F9A", archived: false },
@@ -424,7 +441,7 @@ function MainApp({ store, setStore, access, mode, onExit }) {
           {view === "tiers-patients" && <TiersSimple store={scoped} setStore={setStore} notify={notify} kind="patients" etbId={etbId} />}
           {view === "tiers-partenaires" && <TiersSimple store={scoped} setStore={setStore} notify={notify} kind="partenaires" etbId={etbId} />}
           {view === "tiers-lieux" && <TiersSimple store={scoped} setStore={setStore} notify={notify} kind="warehouses" etbId={etbId} />}
-          {view === "tiers-archive" && <TiersArchive notify={notify} />}
+          {view === "tiers-archive" && <TiersArchive store={scoped} setStore={setStore} notify={notify} />}
           {view === "inventaire-stock" && <Inventaire store={scoped} setStore={setStore} notify={notify} helpers={{ whName }} />}
           {view === "maintenance-parc" && <Maintenance store={scoped} setStore={setStore} notify={notify} mode="parc" />}
           {view === "maintenance-revisions" && <Maintenance store={scoped} setStore={setStore} notify={notify} mode="revisions" />}
@@ -1323,53 +1340,22 @@ function TiersSimple({ notify, kind }) {
   );
 }
 
-function TiersArchive({ notify }) {
-  const [products, setProducts] = useState([]);
-  const [patients, setPatients] = useState([]);
-  const [partenaires, setPartenaires] = useState([]);
-  const [warehouses, setWarehouses] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  // Charge tous les éléments archivés depuis la base de données.
-  const reload = async () => {
-    setLoading(true);
-    try {
-      const [prods, pats, parts, whs] = await Promise.all([
-        db.listProduitsArchived(),
-        db.listTiersArchived("patients"),
-        db.listTiersArchived("partenaires"),
-        db.listTiersArchived("warehouses"),
-      ]);
-      setProducts(prods); setPatients(pats); setPartenaires(parts); setWarehouses(whs);
-    } catch (e) {
-      notify("Erreur de connexion à la base : " + e.message);
-    }
-    setLoading(false);
+function TiersArchive({ store, setStore, notify }) {
+  const restore = (kind, id) => {
+    setStore((s) => ({ ...s, [kind]: s[kind].map((x) => x.id === id ? { ...x, archived: false } : x) }));
+    notify("Élément désarchivé.");
   };
-  useEffect(() => { reload(); }, []);
-
-  const restore = async (kind, id) => {
-    try {
-      if (kind === "products") await db.setProduitArchived(id, false);
-      else await db.unarchiveTiers(kind, id);
-      notify("Élément désarchivé.");
-      await reload();
-    } catch (e) {
-      notify("Erreur : " + e.message);
-    }
-  };
-
   const groups = [
-    { label: "Matériels retirés", items: products, icon: Package, kind: "products" },
-    { label: "Anciens patients", items: patients, icon: Users, kind: "patients" },
-    { label: "Anciens partenaires", items: partenaires, icon: Building2, kind: "partenaires" },
-    { label: "Anciens lieux", items: warehouses, icon: Building2, kind: "warehouses" },
+    { label: "Matériels retirés", items: store.products.filter((p) => p.archived), icon: Package, kind: "products" },
+    { label: "Anciens patients", items: store.patients.filter((p) => p.archived), icon: Users, kind: "patients" },
+    { label: "Anciens partenaires", items: (store.partenaires || []).filter((p) => p.archived), icon: Building2, kind: "partenaires" },
+    { label: "Anciens lieux", items: store.warehouses.filter((w) => w.archived), icon: Building2, kind: "warehouses" },
   ];
   const total = groups.reduce((a, g) => a + g.items.length, 0);
   return (
     <div>
-      <PageTitle title="Tiers archivés" sub={loading ? "Chargement depuis la base…" : "Historique des éléments retirés ou désactivés."} />
-      {loading ? null : total === 0 ? <Empty icon={Archive} msg="Aucun tiers archivé." /> : (
+      <PageTitle title="Tiers archivés" sub="Historique des éléments retirés ou désactivés." />
+      {total === 0 ? <Empty icon={Archive} msg="Aucun tiers archivé." /> : (
         <div className="space-y-6">
           {groups.filter((g) => g.items.length).map((g) => {
             const Icon = g.icon;
@@ -2069,7 +2055,7 @@ function AdminApp({ store, setStore, onPreview }) {
       notify("Établissement modifié.");
     } else {
       const code = genCode(etbForm.name, "ETB");
-      setStore((s) => ({ ...s, establishments: [{ id: newId("ETB"), name: etbForm.name, identifiant: ident, code, archived: false }, ...s.establishments] }));
+      setStore((s) => ({ ...s, establishments: [{ id: newId("ETB"), name: etbForm.name, identifiant: ident, code, archived: false, subscription: { ...DEFAULT_SUB } }, ...s.establishments] }));
       notify(`Établissement créé — identifiant « ${ident} », code ${code}.`);
     }
     setEtbOpen(false);
@@ -2082,6 +2068,16 @@ function AdminApp({ store, setStore, onPreview }) {
     }));
     setSelectedEtb(null);
     notify("Établissement archivé (avec ses accès).");
+  };
+
+  /* ----- subscription modal ----- */
+  const [subOpen, setSubOpen] = useState(false);
+  const [subForm, setSubForm] = useState(DEFAULT_SUB);
+  const openSub = (e) => { setSubForm({ ...DEFAULT_SUB, ...(e.subscription || {}) }); setSubOpen(true); };
+  const saveSub = () => {
+    setStore((s) => ({ ...s, establishments: s.establishments.map((e) => e.id === selectedEtb.id ? { ...e, subscription: { ...subForm } } : e) }));
+    notify("Abonnement mis à jour.");
+    setSubOpen(false);
   };
 
   /* ----- access modal ----- */
@@ -2206,6 +2202,49 @@ function AdminApp({ store, setStore, onPreview }) {
               </div>
             </div>
 
+            {/* ---------- subscription ---------- */}
+            {(() => {
+              const sub = { ...DEFAULT_SUB, ...(etb.subscription || {}) };
+              const plan = planOf(sub.plan);
+              const st = SUB_STATUS[sub.status] || SUB_STATUS.actif;
+              return (
+                <div className="mb-6">
+                  <div className="mb-2 flex items-center justify-between">
+                    <div>
+                      <h2 className="text-base font-semibold text-slate-800">Abonnement</h2>
+                      <p className="text-sm text-slate-400">L'offre souscrite par cet établissement et sa facturation.</p>
+                    </div>
+                    <button onClick={() => openSub(etb)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"><Pencil size={14} /> Gérer l'abonnement</button>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="grid h-11 w-11 place-items-center rounded-lg bg-teal-50 text-teal-700"><CreditCard size={20} /></div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-slate-800">Offre {plan.label}</span>
+                            <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${st.cls}`}>{st.label}</span>
+                          </div>
+                          <div className="text-xs text-slate-400">{plan.desc}</div>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-lg font-semibold text-slate-800">{plan.price} €<span className="text-sm font-normal text-slate-400"> / mois</span></div>
+                      </div>
+                    </div>
+                    <div className="mt-4 grid grid-cols-1 gap-3 border-t border-slate-100 pt-4 text-sm sm:grid-cols-2">
+                      <div className="flex items-center gap-2 text-slate-500"><Calendar size={14} className="text-slate-400" /> Depuis le <span className="font-medium text-slate-700">{fmtFR(sub.since)}</span></div>
+                      <div className="flex items-center gap-2 text-slate-500">
+                        <CalendarDays size={14} className="text-slate-400" />
+                        {sub.status === "annule" ? "Pas de prochaine échéance" : <>Prochaine échéance <span className="font-medium text-slate-700">{fmtFR(sub.nextBilling)}</span></>}
+                      </div>
+                    </div>
+                    <p className="mt-3 text-[11px] text-slate-400">Le paiement en ligne (carte bancaire, factures automatiques) sera activé à l'étape de mise en vente.</p>
+                  </div>
+                </div>
+              );
+            })()}
+
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <h2 className="text-base font-semibold text-slate-800">Accès</h2>
@@ -2291,6 +2330,40 @@ function AdminApp({ store, setStore, onPreview }) {
         <div className="mt-5 flex justify-end gap-2">
           <button onClick={() => setEtbOpen(false)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Annuler</button>
           <button disabled={!etbForm.name.trim() || !etbForm.identifiant.trim()} onClick={saveEtb} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white enabled:hover:bg-slate-800 disabled:opacity-40">{etbEditing ? "Enregistrer" : "Créer"}</button>
+        </div>
+      </Modal>
+
+      {/* subscription modal */}
+      <Modal open={subOpen} onClose={() => setSubOpen(false)} title="Gérer l'abonnement">
+        <div className="space-y-4">
+          <Field label="Offre">
+            <div className="space-y-2">
+              {PLANS.map((p) => (
+                <label key={p.id} className={`flex cursor-pointer items-center justify-between gap-3 rounded-lg border px-3 py-2.5 ${subForm.plan === p.id ? "border-teal-500 bg-teal-50/50 ring-1 ring-teal-500" : "border-slate-200 hover:bg-slate-50"}`}>
+                  <div className="flex items-center gap-3">
+                    <input type="radio" name="plan" checked={subForm.plan === p.id} onChange={() => setSubForm((f) => ({ ...f, plan: p.id }))} className="accent-teal-600" />
+                    <div>
+                      <div className="text-sm font-medium text-slate-800">{p.label}</div>
+                      <div className="text-xs text-slate-400">{p.desc}</div>
+                    </div>
+                  </div>
+                  <div className="text-sm font-semibold text-slate-700">{p.price} €<span className="font-normal text-slate-400"> / mois</span></div>
+                </label>
+              ))}
+            </div>
+          </Field>
+          <Field label="Statut">
+            <select value={subForm.status} onChange={(e) => setSubForm((f) => ({ ...f, status: e.target.value }))} className={inputCls}>
+              {Object.entries(SUB_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+            </select>
+          </Field>
+          <Field label="Prochaine échéance de facturation">
+            <input type="date" value={subForm.nextBilling} onChange={(e) => setSubForm((f) => ({ ...f, nextBilling: e.target.value }))} className={inputCls} />
+          </Field>
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button onClick={() => setSubOpen(false)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Annuler</button>
+          <button onClick={saveSub} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800">Enregistrer</button>
         </div>
       </Modal>
 
