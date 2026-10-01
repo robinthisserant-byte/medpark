@@ -161,3 +161,77 @@ export async function unarchiveTiers(kind, id) {
   const { error } = await supabase.from(t.table).update({ archived: false }).eq("id", id);
   if (error) throw error;
 }
+
+/* ------------------------------------------------------------------ *
+ *  RÉSERVATIONS (table "reservations").
+ *  Colonnes base : produit_id, patient_id, retrait_id (lieu de départ),
+ *  retour_id (lieu de retour), debut, fin, note, pdf, archived.
+ * ------------------------------------------------------------------ */
+
+// base -> application
+function reservationFromDb(r) {
+  return {
+    id: r.id,
+    product: r.produit_id || "",
+    patient: r.patient_id || "",
+    warehouse: r.retrait_id || "",      // lieu de retrait / départ
+    returnWarehouse: r.retour_id || "", // lieu de retour
+    returnWh: r.retour_id || "",        // alias utilisé par l'écran détail
+    start: r.debut,
+    end: r.fin,
+    note: r.note || "",
+    pdf: r.pdf || null,
+    archived: r.archived,
+    etb: r.etablissement_id,
+  };
+}
+
+// application -> base
+function reservationToDb(f, etbId) {
+  return {
+    etablissement_id: etbId,
+    produit_id: f.product || null,
+    patient_id: f.patient || null,
+    retrait_id: f.warehouse || null,
+    retour_id: f.returnWh || f.returnWarehouse || null,
+    debut: f.start || null,
+    fin: f.end || null,
+    note: f.note || null,
+    pdf: f.pdf || null,
+  };
+}
+
+// Liste toutes les réservations (actives + archivées ; chaque écran filtre ensuite).
+export async function listReservations() {
+  const { data, error } = await supabase
+    .from("reservations").select("*").order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data || []).map(reservationFromDb);
+}
+
+// Crée une ou plusieurs réservations d'un coup (la principale + les matériels associés).
+export async function createReservations(list, etbId) {
+  const rows = list.map((f) => reservationToDb(f, etbId));
+  const { data, error } = await supabase.from("reservations").insert(rows).select();
+  if (error) throw error;
+  return (data || []).map(reservationFromDb);
+}
+
+// Archive ou désarchive une réservation.
+export async function setReservationArchived(id, archived) {
+  const { error } = await supabase.from("reservations").update({ archived }).eq("id", id);
+  if (error) throw error;
+}
+
+// Clôture une réservation : on l'archive, on note le lieu de retour et la date de fin.
+export async function endReservation(id, retourId, finIso) {
+  const { error } = await supabase
+    .from("reservations").update({ archived: true, retour_id: retourId || null, fin: finIso }).eq("id", id);
+  if (error) throw error;
+}
+
+// Déplace un matériel dans un autre lieu de stockage (utilisé au retour d'une location).
+export async function setProduitEntrepot(id, entrepotId) {
+  const { error } = await supabase.from("produits").update({ entrepot_id: entrepotId || null }).eq("id", id);
+  if (error) throw error;
+}
