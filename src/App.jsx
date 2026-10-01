@@ -1218,41 +1218,67 @@ function TiersMateriel({ notify }) {
 }
 
 /* ================== Ajout de tiers : patients / lieux ================== */
-function TiersSimple({ store, setStore, notify, kind, etbId }) {
+function TiersSimple({ notify, kind }) {
   const CFG = {
     patients:    { title: "Patients / Clients", unit: "patient(s)", prefix: "PAT", icon: Users, add: "Ajouter un patient / client" },
     warehouses:  { title: "Lieux de stockage", unit: "entrepôt(s)", prefix: "LIE", icon: Building2, add: "Ajouter un lieu de stockage" },
     partenaires: { title: "Partenaires", unit: "partenaire(s)", prefix: "PAR", icon: Building2, add: "Ajouter un partenaire" },
   }[kind];
   const isPatients = kind === "patients";
-  const list = store[kind].filter((x) => !x.archived);
-  const partners = (store.partenaires || []).filter((p) => !p.archived);
+  const [list, setList] = useState([]);
+  const [partners, setPartners] = useState([]);
+  const [etbId, setEtbId] = useState(null);
+  const [loading, setLoading] = useState(true);
   const partnerName = (id) => partners.find((p) => p.id === id)?.name;
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [f, setF] = useState({ name: "", address: "", partenaire: "" });
 
+  // Charge la liste (et les partenaires, pour le menu déroulant des patients) depuis la base.
+  const reload = async () => {
+    setLoading(true);
+    try {
+      const [items, eid] = await Promise.all([db.listTiers(kind), db.getEtablissementId()]);
+      setList(items); setEtbId(eid);
+      if (isPatients) setPartners(await db.listTiers("partenaires"));
+    } catch (e) {
+      notify("Erreur de connexion à la base : " + e.message);
+    }
+    setLoading(false);
+  };
+  useEffect(() => { reload(); }, [kind]);
+
   const openNew = () => { setEditing(null); setF({ name: "", address: "", partenaire: "" }); setOpen(true); };
   const openEdit = (x) => { setEditing(x); setF({ name: x.name, address: x.address || "", partenaire: x.partenaire || "" }); setOpen(true); };
-  const submit = () => {
-    if (editing) {
-      setStore((s) => ({ ...s, [kind]: s[kind].map((x) => x.id === editing.id ? { ...x, name: f.name, address: f.address, ...(isPatients ? { partenaire: f.partenaire } : {}) } : x) }));
-      notify("Modifié.");
-    } else {
-      const id = newId(CFG.prefix);
-      const rec = { id, name: f.name, address: f.address, etb: etbId, archived: false };
-      if (isPatients && f.partenaire) rec.partenaire = f.partenaire;
-      setStore((s) => ({ ...s, [kind]: [rec, ...s[kind]] }));
-      notify("Ajouté.");
+  const submit = async () => {
+    try {
+      if (editing) {
+        await db.updateTiers(kind, editing.id, f);
+        notify("Modifié et enregistré.");
+      } else {
+        await db.createTiers(kind, f, etbId);
+        notify("Ajouté et enregistré.");
+      }
+      await reload();
+    } catch (e) {
+      notify("Erreur d'enregistrement : " + e.message);
+      return;
     }
     setOpen(false); setF({ name: "", address: "", partenaire: "" });
   };
-  const archive = (id) => setStore((s) => ({ ...s, [kind]: s[kind].map((x) => x.id === id ? { ...x, archived: true } : x) }));
+  const archive = async (id) => {
+    try {
+      await db.archiveTiers(kind, id);
+      await reload();
+    } catch (e) {
+      notify("Erreur : " + e.message);
+    }
+  };
   const Icon = CFG.icon;
 
   return (
     <div>
-      <PageTitle title={CFG.title} sub={`${list.length} ${CFG.unit}`}
+      <PageTitle title={CFG.title} sub={loading ? "Chargement depuis la base…" : `${list.length} ${CFG.unit}`}
         action={<button onClick={openNew} className="inline-flex items-center gap-2 rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white hover:bg-teal-800"><Plus size={16} /> Ajouter</button>} />
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {list.map((x) => (
