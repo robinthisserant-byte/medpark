@@ -94,6 +94,14 @@ export async function setProduitArchived(id, archived) {
   if (error) throw error;
 }
 
+// Liste uniquement les matériels archivés (pour l'écran "Tiers archivés").
+export async function listProduitsArchived() {
+  const { data, error } = await supabase
+    .from("produits").select("*").eq("archived", true).order("nom");
+  if (error) throw error;
+  return (data || []).map(produitFromDb);
+}
+
 /* ------------------------------------------------------------------ *
  *  TIERS SIMPLES : lieux de stockage (entrepots), patients, partenaires.
  *  Ces 3 écrans se ressemblent, donc on les gère avec les mêmes fonctions,
@@ -136,5 +144,20 @@ export async function updateTiers(kind, id, f) {
 export async function archiveTiers(kind, id) {
   const t = TIERS[kind];
   const { error } = await supabase.from(t.table).update({ archived: true }).eq("id", id);
+  if (error) throw error;
+}
+
+// Liste les tiers archivés d'un type donné (pour l'écran "Tiers archivés").
+export async function listTiersArchived(kind) {
+  const t = TIERS[kind];
+  const { data, error } = await supabase.from(t.table).select("*").eq("archived", true).order("nom");
+  if (error) throw error;
+  return (data || []).map(tiersFromDb);
+}
+
+// Désarchive un tiers (le remet dans la liste active).
+export async function unarchiveTiers(kind, id) {
+  const t = TIERS[kind];
+  const { error } = await supabase.from(t.table).update({ archived: false }).eq("id", id);
   if (error) throw error;
 }
