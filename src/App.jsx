@@ -438,16 +438,16 @@ function MainApp({ store, setStore, access, mode, onExit }) {
         </header>
 
         <div className="flex-1 px-4 py-6 md:px-8">
-          {view === "res-list" && <ResList store={scoped} setStore={setStore} notify={notify} go={setView} helpers={{ productName, patientName, whName }} />}
-          {view === "res-new" && <ResNew store={scoped} setStore={setStore} notify={notify} go={setView} etbId={etbId} />}
-          {view === "res-archive" && <ResArchive store={scoped} setStore={setStore} notify={notify} helpers={{ productName, patientName, whName }} />}
-          {view === "agenda-current" && <Agenda store={scoped} archived={false} helpers={{ productName }} />}
-          {view === "agenda-archive" && <Agenda store={scoped} archived={true} helpers={{ productName }} />}
+          {view === "res-list" && <ResList notify={notify} go={setView} />}
+          {view === "res-new" && <ResNew notify={notify} go={setView} />}
+          {view === "res-archive" && <ResArchive notify={notify} />}
+          {view === "agenda-current" && <Agenda archived={false} notify={notify} />}
+          {view === "agenda-archive" && <Agenda archived={true} notify={notify} />}
           {view === "tiers-materiel" && <TiersMateriel store={scoped} setStore={setStore} notify={notify} helpers={{ whName }} etbId={etbId} />}
           {view === "tiers-patients" && <TiersSimple store={scoped} setStore={setStore} notify={notify} kind="patients" etbId={etbId} />}
           {view === "tiers-partenaires" && <TiersSimple store={scoped} setStore={setStore} notify={notify} kind="partenaires" etbId={etbId} />}
           {view === "tiers-lieux" && <TiersSimple store={scoped} setStore={setStore} notify={notify} kind="warehouses" etbId={etbId} />}
-          {view === "tiers-archive" && <TiersArchive store={scoped} setStore={setStore} notify={notify} />}
+          {view === "tiers-archive" && <TiersArchive notify={notify} />}
           {view === "inventaire-stock" && <Inventaire store={scoped} setStore={setStore} notify={notify} helpers={{ whName }} />}
           {view === "maintenance-parc" && <Maintenance store={scoped} setStore={setStore} notify={notify} mode="parc" />}
           {view === "maintenance-revisions" && <Maintenance store={scoped} setStore={setStore} notify={notify} mode="revisions" />}
@@ -481,15 +481,41 @@ function PageTitle({ title, sub, action }) {
 }
 
 /* ================== Réservations : liste ================== */
-function ResList({ store, setStore, notify, helpers }) {
+function ResList({ notify, go }) {
   const [q, setQ] = useState("");
   const [sort, setSort] = useState("date");
   const [viewMode, setViewMode] = useState("list");
   const [scanOpen, setScanOpen] = useState(false);
   const [detail, setDetail] = useState(null);
-  const { productName, patientName, whName } = helpers;
 
-  let rows = store.reservations.filter((r) => !r.archived);
+  const [products, setProducts] = useState([]);
+  const [patients, setPatients] = useState([]);
+  const [warehouses, setWarehouses] = useState([]);
+  const [reservations, setReservations] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  // Charge réservations + listes de référence depuis la base.
+  const reload = async () => {
+    setLoading(true);
+    try {
+      const [prods, pats, whs, res] = await Promise.all([
+        db.listProduits(), db.listTiers("patients"), db.listEntrepots(), db.listReservations(),
+      ]);
+      setProducts(prods); setPatients(pats); setWarehouses(whs); setReservations(res);
+    } catch (e) {
+      notify("Erreur de connexion à la base : " + e.message);
+    }
+    setLoading(false);
+  };
+  useEffect(() => { reload(); }, []);
+
+  const productName = (id) => products.find((p) => p.id === id)?.name || id;
+  const patientName = (id) => patients.find((p) => p.id === id)?.name || id;
+  const whName = (id) => warehouses.find((w) => w.id === id)?.name || id;
+  const helpers = { productName, patientName, whName };
+  const store = { products, patients, warehouses, reservations };
+
+  let rows = reservations.filter((r) => !r.archived);
   if (q.trim()) {
     const t = q.toLowerCase();
     rows = rows.filter((r) =>
@@ -501,18 +527,20 @@ function ResList({ store, setStore, notify, helpers }) {
     : sort === "produit" ? productName(a.product).localeCompare(productName(b.product))
     : resStatus(a).localeCompare(resStatus(b)));
 
-  const endReservation = (res, returnWh) => {
-    setStore((s) => ({
-      ...s,
-      reservations: s.reservations.map((r) =>
-        r.id === res.id ? { ...r, archived: true, returnWarehouse: returnWh, end: TODAY } : r),
-      products: s.products.map((p) => p.id === res.product ? { ...p, warehouse: returnWh } : p),
-    }));
+  const endReservation = async (res, returnWh) => {
+    try {
+      await db.endReservation(res.id, returnWh, TODAY);
+      await db.setProduitEntrepot(res.product, returnWh);
+      await reload();
+    } catch (e) { notify("Erreur : " + e.message); return; }
     setDetail(null);
     notify("Réservation clôturée et archivée.");
   };
-  const archiveReservation = (res) => {
-    setStore((s) => ({ ...s, reservations: s.reservations.map((r) => r.id === res.id ? { ...r, archived: true } : r) }));
+  const archiveReservation = async (res) => {
+    try {
+      await db.setReservationArchived(res.id, true);
+      await reload();
+    } catch (e) { notify("Erreur : " + e.message); return; }
     setDetail(null);
     notify("Réservation archivée. Vous pouvez en créer une nouvelle.");
   };
@@ -746,60 +774,91 @@ function Row({ label, value }) {
 }
 
 /* ================== Réservations : nouvelle ================== */
-function ResNew({ store, setStore, notify, go, etbId }) {
+function ResNew({ notify, go }) {
   const [f, setF] = useState({ product: "", patient: "", warehouse: "", returnWh: "", start: "", end: "", note: "", pdf: null });
   const [cal, setCal] = useState({ y: 2026, m: 5 });
   const [qpOpen, setQpOpen] = useState(false);
   const [qp, setQp] = useState({ name: "", address: "" });
 
+  const [products, setProducts] = useState([]);
+  const [patients, setPatients] = useState([]);
+  const [warehouses, setWarehouses] = useState([]);
+  const [reservations, setReservations] = useState([]);
+  const [etbId, setEtbId] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  // Charge les listes (produits, patients, lieux) et les réservations depuis la base.
+  const reload = async () => {
+    try {
+      const [prods, pats, whs, res, eid] = await Promise.all([
+        db.listProduits(), db.listTiers("patients"), db.listEntrepots(), db.listReservations(), db.getEtablissementId(),
+      ]);
+      setProducts(prods); setPatients(pats); setWarehouses(whs); setReservations(res); setEtbId(eid);
+    } catch (e) {
+      notify("Erreur de connexion à la base : " + e.message);
+    }
+  };
+  useEffect(() => { reload(); }, []);
+
   const occupied = useMemo(() => {
     const set = new Set();
     if (!f.product) return set;
-    store.reservations.filter((r) => r.product === f.product && !r.archived).forEach((r) => {
+    reservations.filter((r) => r.product === f.product && !r.archived).forEach((r) => {
       let d = parseISO(r.start); const end = parseISO(r.end);
       while (d <= end) { set.add(toISO(d)); d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1); }
     });
     return set;
-  }, [f.product, store.reservations]);
+  }, [f.product, reservations]);
 
   // Blocage des doublons : conflit si le même produit est déjà réservé sur une période qui chevauche
   const conflict = useMemo(() => {
     if (!f.product || !f.start || !f.end || f.start > f.end) return null;
-    return store.reservations.find((r) => r.product === f.product && !r.archived && f.start <= r.end && r.start <= f.end) || null;
-  }, [f.product, f.start, f.end, store.reservations]);
+    return reservations.find((r) => r.product === f.product && !r.archived && f.start <= r.end && r.start <= f.end) || null;
+  }, [f.product, f.start, f.end, reservations]);
 
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
-  const whName = (id) => store.warehouses.find((w) => w.id === id)?.name || id;
-  const valid = f.product && f.patient && f.warehouse && f.start && f.end && f.start <= f.end && !conflict;
+  const whName = (id) => warehouses.find((w) => w.id === id)?.name || id;
+  const valid = f.product && f.patient && f.warehouse && f.start && f.end && f.start <= f.end && !conflict && !saving;
 
-  const createQuickPatient = () => {
-    const id = newId("PAT");
-    setStore((s) => ({ ...s, patients: [{ id, name: qp.name, address: qp.address, etb: etbId, archived: false }, ...s.patients] }));
-    set("patient", id);
-    setQpOpen(false); setQp({ name: "", address: "" });
-    notify("Patient créé et sélectionné.");
+  const createQuickPatient = async () => {
+    try {
+      const created = await db.createTiers("patients", { name: qp.name, address: qp.address }, etbId);
+      setPatients(await db.listTiers("patients"));
+      set("patient", created.id);
+      setQpOpen(false); setQp({ name: "", address: "" });
+      notify("Patient créé et sélectionné.");
+    } catch (e) {
+      notify("Erreur : " + e.message);
+    }
   };
 
   const linkedProducts = useMemo(() => {
-    const prod = store.products.find((p) => p.id === f.product);
-    return (prod?.linked || []).map((id) => store.products.find((x) => x.id === id)).filter((x) => x && !x.archived);
-  }, [f.product, store.products]);
+    const prod = products.find((p) => p.id === f.product);
+    return (prod?.linked || []).map((id) => products.find((x) => x.id === id)).filter((x) => x && !x.archived);
+  }, [f.product, products]);
 
-  const submit = () => {
+  const submit = async () => {
     if (conflict) { notify("Réservation bloquée : le matériel est déjà réservé sur cette période."); return; }
-    const mainId = newId("RES");
-    const toAdd = [{ ...f, id: mainId, etb: etbId, archived: false }];
+    const toAdd = [{ ...f }];
     let skipped = 0;
     linkedProducts.forEach((lp) => {
-      const c = store.reservations.find((r) => r.product === lp.id && !r.archived && f.start <= r.end && r.start <= f.end);
+      const c = reservations.find((r) => r.product === lp.id && !r.archived && f.start <= r.end && r.start <= f.end);
       if (c) { skipped++; return; }
-      toAdd.push({ ...f, product: lp.id, id: newId("RES"), linkedFrom: mainId, etb: etbId, archived: false });
+      toAdd.push({ ...f, product: lp.id });
     });
-    setStore((s) => ({ ...s, reservations: [...toAdd, ...s.reservations] }));
+    setSaving(true);
+    try {
+      await db.createReservations(toAdd, etbId);
+    } catch (e) {
+      setSaving(false);
+      notify("Erreur d'enregistrement : " + e.message);
+      return;
+    }
+    setSaving(false);
     const added = toAdd.length - 1;
     notify(added > 0
       ? `Réservation créée avec ${added} matériel(s) associé(s)${skipped ? ` (${skipped} indisponible(s) ignoré(s))` : ""}.`
-      : `Réservation ${mainId} créée.`);
+      : "Réservation créée.");
     go("res-list");
   };
 
@@ -811,14 +870,14 @@ function ResNew({ store, setStore, notify, go, etbId }) {
           <Field label="Produit">
             <select value={f.product} onChange={(e) => set("product", e.target.value)} className={inputCls}>
               <option value="">Choisir un matériel…</option>
-              {store.products.filter((p) => !p.archived).map((p) => <option key={p.id} value={p.id}>{p.name} — {p.sub}</option>)}
+              {products.filter((p) => !p.archived).map((p) => <option key={p.id} value={p.id}>{p.name} — {p.sub}</option>)}
             </select>
           </Field>
           {linkedProducts.length > 0 && (
             <div className="rounded-lg bg-teal-50 px-3 py-2.5 text-xs text-teal-800">
               <div className="mb-1 flex items-center gap-1.5 font-medium"><Link2 size={13} /> Réservés ensemble (même patient, mêmes dates) :</div>
               <ul className="space-y-1">
-                <li className="flex items-center gap-2"><span className="font-medium">{store.products.find((p) => p.id === f.product)?.name}</span><span className="text-teal-600">— {whName(store.products.find((p) => p.id === f.product)?.warehouse)}</span></li>
+                <li className="flex items-center gap-2"><span className="font-medium">{products.find((p) => p.id === f.product)?.name}</span><span className="text-teal-600">— {whName(products.find((p) => p.id === f.product)?.warehouse)}</span></li>
                 {linkedProducts.map((lp) => (
                   <li key={lp.id} className="flex flex-wrap items-center gap-2">
                     <span className="font-medium">{lp.name}</span>
@@ -842,7 +901,7 @@ function ResNew({ store, setStore, notify, go, etbId }) {
               <div className="flex gap-2">
                 <select value={f.patient} onChange={(e) => set("patient", e.target.value)} className={inputCls}>
                   <option value="">Sélectionner…</option>
-                  {store.patients.filter((p) => !p.archived).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  {patients.filter((p) => !p.archived).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
                 <button type="button" onClick={() => setQpOpen(true)} title="Créer un patient" className="shrink-0 rounded-lg border border-slate-200 px-2.5 text-slate-500 hover:bg-slate-50"><Plus size={16} /></button>
               </div>
@@ -850,14 +909,14 @@ function ResNew({ store, setStore, notify, go, etbId }) {
             <Field label="Lieu de retrait">
               <select value={f.warehouse} onChange={(e) => set("warehouse", e.target.value)} className={inputCls}>
                 <option value="">Sélectionner…</option>
-                {store.warehouses.filter((w) => !w.archived).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+                {warehouses.filter((w) => !w.archived).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
               </select>
             </Field>
           </div>
           <Field label="Lieu de retour prévu" hint="Modifiable en cours de réservation. Sert à anticiper les transferts.">
             <select value={f.returnWh} onChange={(e) => set("returnWh", e.target.value)} className={inputCls}>
               <option value="">Même lieu que le retrait</option>
-              {store.warehouses.filter((w) => !w.archived).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+              {warehouses.filter((w) => !w.archived).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
             </select>
           </Field>
           <Field label="Note libre">
@@ -903,17 +962,45 @@ function ResNew({ store, setStore, notify, go, etbId }) {
     </div>
   );
 }
-function ResArchive({ store, setStore, notify, helpers }) {
-  const { productName, patientName, whName } = helpers;
-  const rows = store.reservations.filter((r) => r.archived);
-  const restore = (id) => {
-    setStore((s) => ({ ...s, reservations: s.reservations.map((r) => r.id === id ? { ...r, archived: false } : r) }));
-    notify("Réservation désarchivée — de nouveau active.");
+function ResArchive({ notify }) {
+  const [rows, setRows] = useState([]);
+  const [products, setProducts] = useState([]);
+  const [patients, setPatients] = useState([]);
+  const [warehouses, setWarehouses] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const reload = async () => {
+    setLoading(true);
+    try {
+      const [res, prods, pats, whs] = await Promise.all([
+        db.listReservations(), db.listProduits(), db.listTiers("patients"), db.listEntrepots(),
+      ]);
+      setRows(res.filter((r) => r.archived));
+      setProducts(prods); setPatients(pats); setWarehouses(whs);
+    } catch (e) {
+      notify("Erreur de connexion à la base : " + e.message);
+    }
+    setLoading(false);
+  };
+  useEffect(() => { reload(); }, []);
+
+  const productName = (id) => products.find((p) => p.id === id)?.name || id;
+  const patientName = (id) => patients.find((p) => p.id === id)?.name || id;
+  const whName = (id) => warehouses.find((w) => w.id === id)?.name || id;
+
+  const restore = async (id) => {
+    try {
+      await db.setReservationArchived(id, false);
+      await reload();
+      notify("Réservation désarchivée — de nouveau active.");
+    } catch (e) {
+      notify("Erreur : " + e.message);
+    }
   };
   return (
     <div>
-      <PageTitle title="Réservations archivées" sub="Jamais supprimées — toujours consultables." />
-      {rows.length === 0 ? <Empty icon={Archive} msg="Aucune réservation archivée." /> : (
+      <PageTitle title="Réservations archivées" sub={loading ? "Chargement depuis la base…" : "Jamais supprimées — toujours consultables."} />
+      {loading ? null : rows.length === 0 ? <Empty icon={Archive} msg="Aucune réservation archivée." /> : (
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-400">
@@ -941,13 +1028,26 @@ function ResArchive({ store, setStore, notify, helpers }) {
 }
 
 /* ================== Agenda ================== */
-function Agenda({ store, archived, helpers }) {
-  const { productName } = helpers;
+function Agenda({ archived, notify }) {
+  const [reservations, setReservations] = useState([]);
+  const [products, setProducts] = useState([]);
   const [cal, setCal] = useState({ y: 2026, m: 5 });
   const [filterProducts, setFilterProducts] = useState([]);
   const [statusFilter, setStatusFilter] = useState("tous");
 
-  const events = store.reservations.filter((r) => r.archived === archived);
+  useEffect(() => {
+    (async () => {
+      try {
+        const [res, prods] = await Promise.all([db.listReservations(), db.listProduits()]);
+        setReservations(res); setProducts(prods);
+      } catch (e) {
+        if (notify) notify("Erreur de connexion à la base : " + e.message);
+      }
+    })();
+  }, []);
+
+  const productName = (id) => products.find((p) => p.id === id)?.name || id;
+  const events = reservations.filter((r) => r.archived === archived);
   const cells = monthMatrix(cal.y, cal.m);
 
   const visible = (r) => {
@@ -957,7 +1057,7 @@ function Agenda({ store, archived, helpers }) {
   };
   const dayEvents = (iso) => events.filter((r) => visible(r) && r.start <= iso && iso <= r.end);
   const COLORS = ["bg-teal-500", "bg-amber-500", "bg-violet-500", "bg-rose-500", "bg-sky-500"];
-  const colorFor = (pid) => COLORS[store.products.findIndex((p) => p.id === pid) % COLORS.length];
+  const colorFor = (pid) => COLORS[products.findIndex((p) => p.id === pid) % COLORS.length];
 
   const toggleProduct = (id) => setFilterProducts((f) => f.includes(id) ? f.filter((x) => x !== id) : [...f, id]);
 
@@ -968,7 +1068,7 @@ function Agenda({ store, archived, helpers }) {
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <Filter size={15} className="text-slate-400" />
-        {store.products.filter((p) => !p.archived).map((p) => (
+        {products.filter((p) => !p.archived).map((p) => (
           <button key={p.id} onClick={() => toggleProduct(p.id)}
             className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium ${filterProducts.includes(p.id) ? "border-teal-600 bg-teal-50 text-teal-800" : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"}`}>
             <span className={`h-2 w-2 rounded-full ${colorFor(p.id)}`} />{p.name}
@@ -1346,22 +1446,53 @@ function TiersSimple({ notify, kind }) {
   );
 }
 
-function TiersArchive({ store, setStore, notify }) {
-  const restore = (kind, id) => {
-    setStore((s) => ({ ...s, [kind]: s[kind].map((x) => x.id === id ? { ...x, archived: false } : x) }));
-    notify("Élément désarchivé.");
+function TiersArchive({ notify }) {
+  const [products, setProducts] = useState([]);
+  const [patients, setPatients] = useState([]);
+  const [partenaires, setPartenaires] = useState([]);
+  const [warehouses, setWarehouses] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  // Charge tous les éléments archivés depuis la base de données.
+  const reload = async () => {
+    setLoading(true);
+    try {
+      const [prods, pats, parts, whs] = await Promise.all([
+        db.listProduitsArchived(),
+        db.listTiersArchived("patients"),
+        db.listTiersArchived("partenaires"),
+        db.listTiersArchived("warehouses"),
+      ]);
+      setProducts(prods); setPatients(pats); setPartenaires(parts); setWarehouses(whs);
+    } catch (e) {
+      notify("Erreur de connexion à la base : " + e.message);
+    }
+    setLoading(false);
   };
+  useEffect(() => { reload(); }, []);
+
+  const restore = async (kind, id) => {
+    try {
+      if (kind === "products") await db.setProduitArchived(id, false);
+      else await db.unarchiveTiers(kind, id);
+      notify("Élément désarchivé.");
+      await reload();
+    } catch (e) {
+      notify("Erreur : " + e.message);
+    }
+  };
+
   const groups = [
-    { label: "Matériels retirés", items: store.products.filter((p) => p.archived), icon: Package, kind: "products" },
-    { label: "Anciens patients", items: store.patients.filter((p) => p.archived), icon: Users, kind: "patients" },
-    { label: "Anciens partenaires", items: (store.partenaires || []).filter((p) => p.archived), icon: Building2, kind: "partenaires" },
-    { label: "Anciens lieux", items: store.warehouses.filter((w) => w.archived), icon: Building2, kind: "warehouses" },
+    { label: "Matériels retirés", items: products, icon: Package, kind: "products" },
+    { label: "Anciens patients", items: patients, icon: Users, kind: "patients" },
+    { label: "Anciens partenaires", items: partenaires, icon: Building2, kind: "partenaires" },
+    { label: "Anciens lieux", items: warehouses, icon: Building2, kind: "warehouses" },
   ];
   const total = groups.reduce((a, g) => a + g.items.length, 0);
   return (
     <div>
-      <PageTitle title="Tiers archivés" sub="Historique des éléments retirés ou désactivés." />
-      {total === 0 ? <Empty icon={Archive} msg="Aucun tiers archivé." /> : (
+      <PageTitle title="Tiers archivés" sub={loading ? "Chargement depuis la base…" : "Historique des éléments retirés ou désactivés."} />
+      {loading ? null : total === 0 ? <Empty icon={Archive} msg="Aucun tiers archivé." /> : (
         <div className="space-y-6">
           {groups.filter((g) => g.items.length).map((g) => {
             const Icon = g.icon;
