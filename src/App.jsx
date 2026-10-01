@@ -424,7 +424,7 @@ function MainApp({ store, setStore, access, mode, onExit }) {
           {view === "tiers-patients" && <TiersSimple store={scoped} setStore={setStore} notify={notify} kind="patients" etbId={etbId} />}
           {view === "tiers-partenaires" && <TiersSimple store={scoped} setStore={setStore} notify={notify} kind="partenaires" etbId={etbId} />}
           {view === "tiers-lieux" && <TiersSimple store={scoped} setStore={setStore} notify={notify} kind="warehouses" etbId={etbId} />}
-          {view === "tiers-archive" && <TiersArchive store={scoped} setStore={setStore} notify={notify} />}
+          {view === "tiers-archive" && <TiersArchive notify={notify} />}
           {view === "inventaire-stock" && <Inventaire store={scoped} setStore={setStore} notify={notify} helpers={{ whName }} />}
           {view === "maintenance-parc" && <Maintenance store={scoped} setStore={setStore} notify={notify} mode="parc" />}
           {view === "maintenance-revisions" && <Maintenance store={scoped} setStore={setStore} notify={notify} mode="revisions" />}
@@ -1323,22 +1323,53 @@ function TiersSimple({ notify, kind }) {
   );
 }
 
-function TiersArchive({ store, setStore, notify }) {
-  const restore = (kind, id) => {
-    setStore((s) => ({ ...s, [kind]: s[kind].map((x) => x.id === id ? { ...x, archived: false } : x) }));
-    notify("Élément désarchivé.");
+function TiersArchive({ notify }) {
+  const [products, setProducts] = useState([]);
+  const [patients, setPatients] = useState([]);
+  const [partenaires, setPartenaires] = useState([]);
+  const [warehouses, setWarehouses] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  // Charge tous les éléments archivés depuis la base de données.
+  const reload = async () => {
+    setLoading(true);
+    try {
+      const [prods, pats, parts, whs] = await Promise.all([
+        db.listProduitsArchived(),
+        db.listTiersArchived("patients"),
+        db.listTiersArchived("partenaires"),
+        db.listTiersArchived("warehouses"),
+      ]);
+      setProducts(prods); setPatients(pats); setPartenaires(parts); setWarehouses(whs);
+    } catch (e) {
+      notify("Erreur de connexion à la base : " + e.message);
+    }
+    setLoading(false);
   };
+  useEffect(() => { reload(); }, []);
+
+  const restore = async (kind, id) => {
+    try {
+      if (kind === "products") await db.setProduitArchived(id, false);
+      else await db.unarchiveTiers(kind, id);
+      notify("Élément désarchivé.");
+      await reload();
+    } catch (e) {
+      notify("Erreur : " + e.message);
+    }
+  };
+
   const groups = [
-    { label: "Matériels retirés", items: store.products.filter((p) => p.archived), icon: Package, kind: "products" },
-    { label: "Anciens patients", items: store.patients.filter((p) => p.archived), icon: Users, kind: "patients" },
-    { label: "Anciens partenaires", items: (store.partenaires || []).filter((p) => p.archived), icon: Building2, kind: "partenaires" },
-    { label: "Anciens lieux", items: store.warehouses.filter((w) => w.archived), icon: Building2, kind: "warehouses" },
+    { label: "Matériels retirés", items: products, icon: Package, kind: "products" },
+    { label: "Anciens patients", items: patients, icon: Users, kind: "patients" },
+    { label: "Anciens partenaires", items: partenaires, icon: Building2, kind: "partenaires" },
+    { label: "Anciens lieux", items: warehouses, icon: Building2, kind: "warehouses" },
   ];
   const total = groups.reduce((a, g) => a + g.items.length, 0);
   return (
     <div>
-      <PageTitle title="Tiers archivés" sub="Historique des éléments retirés ou désactivés." />
-      {total === 0 ? <Empty icon={Archive} msg="Aucun tiers archivé." /> : (
+      <PageTitle title="Tiers archivés" sub={loading ? "Chargement depuis la base…" : "Historique des éléments retirés ou désactivés."} />
+      {loading ? null : total === 0 ? <Empty icon={Archive} msg="Aucun tiers archivé." /> : (
         <div className="space-y-6">
           {groups.filter((g) => g.items.length).map((g) => {
             const Icon = g.icon;
