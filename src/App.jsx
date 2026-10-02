@@ -27,6 +27,14 @@ const WD = ["Lun","Mar","Mer","Jeu","Ven","Sam","Dim"];
 let _seq = 9000;
 const newId = (prefix) => `${prefix}-${++_seq}`;
 
+/* ====== TARIFS (modifiables ici) ====== */
+const PRIX_PAR_ACCES_MOIS = 25;   // € par accès et par mois
+const LICENCE_UNIQUE = 1500;      // € une seule fois, au tout premier paiement
+const MOIS_ESSAI = 2;             // mois d'essai gratuits
+const euros = (n) => `${(n || 0).toLocaleString("fr-FR")} €`;
+const mensuel = (nb) => (nb || 0) * PRIX_PAR_ACCES_MOIS;
+const premierPaiement = (nb) => LICENCE_UNIQUE + mensuel(nb);
+
 function resStatus(r) {
   if (r.archived) return "archivée";
   if (r.start > TODAY) return "à venir";
@@ -342,7 +350,7 @@ function MainApp({ store, setStore, access, mode, onExit }) {
           <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/90 px-4 py-3 text-sm text-slate-400 backdrop-blur md:px-6">{acTab === "abonnement" ? "Mon abonnement" : "Gestion des accès"}</header>
           <div className="px-4 py-6 md:px-8">
             {acTab === "abonnement"
-              ? <MonAbonnement store={store} setStore={setStore} notify={notify} etbId={etbId} />
+              ? <MonAbonnement notify={notify} />
               : <GestionAcces store={store} setStore={setStore} notify={notify} etbId={etbId} />}
           </div>
         </main>
@@ -2098,30 +2106,44 @@ function GestionAcces({ store, setStore, notify, etbId }) {
 }
 
 /* ================== Mon abonnement (côté client) ================== */
-function MonAbonnement({ store, setStore, notify, etbId }) {
-  const etb = store.establishments.find((e) => e.id === etbId);
-  const sub = { ...DEFAULT_SUB, ...((etb && etb.subscription) || {}) };
-  const plan = planOf(sub.plan);
-  const st = SUB_STATUS[sub.status] || SUB_STATUS.actif;
-
+function MonAbonnement({ notify }) {
+  const [sub, setSub] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
-  const [choice, setChoice] = useState(sub.plan);
+  const [choice, setChoice] = useState(1);
 
-  const setSub = (patch) =>
-    setStore((s) => ({ ...s, establishments: s.establishments.map((e) => e.id === etbId ? { ...e, subscription: { ...DEFAULT_SUB, ...(e.subscription || {}), ...patch } } : e) }));
+  const reload = async () => {
+    setLoading(true);
+    try {
+      const a = await db.getMyAbonnement();
+      setSub(a);
+    } catch (e) {
+      notify("Erreur de connexion à la base : " + e.message);
+    }
+    setLoading(false);
+  };
+  useEffect(() => { reload(); }, []);
 
-  const openChange = () => { setChoice(sub.plan); setOpen(true); };
-  const saveChange = () => {
-    setSub({ plan: choice, status: sub.status === "annule" ? "actif" : sub.status });
-    notify("Offre mise à jour.");
+  if (loading || !sub) {
+    return <div><PageTitle title="Mon abonnement" sub="Chargement…" /></div>;
+  }
+
+  const st = SUB_STATUS[sub.statut] || SUB_STATUS.actif;
+  const nb = sub.nbAcces || 1;
+
+  const openChange = () => { setChoice(nb); setOpen(true); };
+  const saveChange = async () => {
+    try {
+      await db.setNbAcces(choice);
+      await reload();
+      notify("Nombre d'accès mis à jour.");
+    } catch (e) { notify("Erreur : " + e.message); return; }
     setOpen(false);
   };
-  const resilier = () => { setSub({ status: "annule" }); notify("Abonnement résilié. Il reste actif jusqu'à l'échéance."); };
-  const reactiver = () => { setSub({ status: "actif" }); notify("Abonnement réactivé."); };
 
   return (
     <div>
-      <PageTitle title="Mon abonnement" sub="Votre offre MedPark, son statut et votre prochaine facturation." />
+      <PageTitle title="Mon abonnement" sub="Votre offre MedPark, son statut et votre facturation." />
 
       <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -2129,53 +2151,48 @@ function MonAbonnement({ store, setStore, notify, etbId }) {
             <div className="grid h-14 w-14 place-items-center rounded-xl bg-teal-50 text-teal-700"><CreditCard size={26} /></div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-lg font-semibold text-slate-800">Offre {plan.label}</span>
+                <span className="text-lg font-semibold text-slate-800">{nb} accès</span>
                 <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${st.cls}`}>{st.label}</span>
               </div>
-              <div className="text-sm text-slate-400">{plan.desc}</div>
+              <div className="text-sm text-slate-400">{nb} × {euros(PRIX_PAR_ACCES_MOIS)} par mois</div>
             </div>
           </div>
           <div className="text-right">
-            <div className="text-2xl font-semibold text-slate-800">{plan.price} €<span className="text-sm font-normal text-slate-400"> / mois</span></div>
+            <div className="text-2xl font-semibold text-slate-800">{euros(mensuel(nb))}<span className="text-sm font-normal text-slate-400"> / mois</span></div>
           </div>
         </div>
 
         <div className="mt-5 grid grid-cols-1 gap-3 border-t border-slate-100 pt-5 text-sm sm:grid-cols-2">
-          <div className="flex items-center gap-2 text-slate-500"><Calendar size={15} className="text-slate-400" /> Client depuis le <span className="font-medium text-slate-700">{fmtFR(sub.since)}</span></div>
-          <div className="flex items-center gap-2 text-slate-500">
-            <CalendarDays size={15} className="text-slate-400" />
-            {sub.status === "annule" ? "Prend fin à l'échéance en cours" : <>Prochain paiement le <span className="font-medium text-slate-700">{fmtFR(sub.nextBilling)}</span></>}
-          </div>
+          {sub.statut === "essai" ? (
+            <>
+              <div className="flex items-center gap-2 text-emerald-700"><Calendar size={15} className="text-emerald-500" /> Essai gratuit jusqu'au <span className="font-medium">{sub.essaiFin ? fmtFR(sub.essaiFin) : "—"}</span></div>
+              <div className="flex items-center gap-2 text-slate-500"><CreditCard size={15} className="text-slate-400" /> 1<sup>er</sup> paiement : <span className="font-medium text-slate-700">{euros(premierPaiement(nb))}</span> <span className="text-xs text-slate-400">(licence {euros(LICENCE_UNIQUE)} + 1 mois)</span></div>
+            </>
+          ) : (
+            <div className="flex items-center gap-2 text-slate-500 sm:col-span-2"><CreditCard size={15} className="text-slate-400" /> Facturation : <span className="font-medium text-slate-700">{euros(mensuel(nb))} / mois</span></div>
+          )}
         </div>
 
         <div className="mt-5 flex flex-wrap gap-2 border-t border-slate-100 pt-5">
-          <button onClick={openChange} className="inline-flex items-center gap-2 rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white hover:bg-teal-800"><ArrowRight size={15} /> Changer d'offre</button>
-          {sub.status === "annule"
-            ? <button onClick={reactiver} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><RotateCcw size={15} /> Réactiver l'abonnement</button>
-            : <button onClick={resilier} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50"><X size={15} /> Résilier l'abonnement</button>}
+          <button onClick={openChange} className="inline-flex items-center gap-2 rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white hover:bg-teal-800"><Pencil size={15} /> Modifier le nombre d'accès</button>
         </div>
 
-        <p className="mt-4 text-[11px] text-slate-400">Le paiement en ligne (carte bancaire, factures téléchargeables) sera activé prochainement. En attendant, pour toute question de facturation, contactez votre interlocuteur MedPark.</p>
+        <p className="mt-4 text-[11px] text-slate-400">Le paiement en ligne (carte bancaire, factures téléchargeables) sera activé prochainement. En attendant, pour toute question de facturation, contactez MedPark.</p>
       </div>
 
-      <Modal open={open} onClose={() => setOpen(false)} title="Changer d'offre">
-        <div className="space-y-2">
-          {PLANS.map((p) => (
-            <label key={p.id} className={`flex cursor-pointer items-center justify-between gap-3 rounded-lg border px-3 py-2.5 ${choice === p.id ? "border-teal-500 bg-teal-50/50 ring-1 ring-teal-500" : "border-slate-200 hover:bg-slate-50"}`}>
-              <div className="flex items-center gap-3">
-                <input type="radio" name="monplan" checked={choice === p.id} onChange={() => setChoice(p.id)} className="accent-teal-600" />
-                <div>
-                  <div className="text-sm font-medium text-slate-800">{p.label} {p.id === sub.plan && <span className="text-xs font-normal text-slate-400">(offre actuelle)</span>}</div>
-                  <div className="text-xs text-slate-400">{p.desc}</div>
-                </div>
-              </div>
-              <div className="text-sm font-semibold text-slate-700">{p.price} €<span className="font-normal text-slate-400"> / mois</span></div>
-            </label>
-          ))}
+      <Modal open={open} onClose={() => setOpen(false)} title="Nombre d'accès">
+        <div className="rounded-xl bg-slate-50 p-4">
+          <div className="flex items-center gap-3">
+            <button type="button" onClick={() => setChoice((n) => Math.max(1, n - 1))} className="grid h-9 w-9 place-items-center rounded-lg border border-slate-200 text-slate-600 hover:bg-white">−</button>
+            <span className="w-10 text-center text-xl font-semibold text-slate-800">{choice}</span>
+            <button type="button" onClick={() => setChoice((n) => Math.min(50, n + 1))} className="grid h-9 w-9 place-items-center rounded-lg border border-slate-200 text-slate-600 hover:bg-white">+</button>
+            <span className="text-sm text-slate-400">× {euros(PRIX_PAR_ACCES_MOIS)}/mois</span>
+          </div>
+          <div className="mt-3 border-t border-slate-200 pt-3 text-sm text-slate-600">Nouveau total : <span className="font-semibold text-slate-800">{euros(mensuel(choice))} / mois</span></div>
         </div>
         <div className="mt-5 flex justify-end gap-2">
           <button onClick={() => setOpen(false)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Annuler</button>
-          <button disabled={choice === sub.plan} onClick={saveChange} className="rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40">Confirmer le changement</button>
+          <button disabled={choice === nb} onClick={saveChange} className="rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40">Enregistrer</button>
         </div>
       </Modal>
     </div>
@@ -2768,21 +2785,40 @@ function Empty({ icon: Icon, msg }) {
 /* ================================================================== *
  *  LOGIN — two-step: establishment code, then personal access code
  * ================================================================== */
-function LoginScreen() {
+function LoginScreen({ onAuthed }) {
+  const [mode, setMode] = useState("login");   // "login" | "signup"
+  const [company, setCompany] = useState("");
+  const [nbAcces, setNbAcces] = useState(1);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
-    if (!email.trim() || !password) return;
-    setBusy(true); setError("");
-    try {
-      await db.signIn(email.trim(), password);
-      // La connexion connecte l'utilisateur ; la racine recharge le profil automatiquement.
-    } catch (e) {
-      setError("Email ou mot de passe incorrect.");
-      setBusy(false);
+    setError("");
+    if (mode === "login") {
+      if (!email.trim() || !password) return;
+      setBusy(true);
+      try {
+        await db.signIn(email.trim(), password);
+        if (onAuthed) await onAuthed();
+      } catch (e) {
+        setError("Email ou mot de passe incorrect."); setBusy(false);
+      }
+    } else {
+      if (!company.trim() || !email.trim() || password.length < 6) {
+        setError("Renseignez le nom de l'entreprise, un email et un mot de passe (6 caractères min)."); return;
+      }
+      setBusy(true);
+      try {
+        const res = await db.signUp(company.trim(), email.trim(), password, nbAcces);
+        if (res && res.needsConfirm) {
+          setError("Vérifiez votre email pour confirmer le compte, puis connectez-vous."); setBusy(false); return;
+        }
+        if (onAuthed) await onAuthed();
+      } catch (e) {
+        setError(e.message && e.message.includes("already") ? "Un compte existe déjà avec cet email." : "Impossible de créer le compte : " + (e.message || "")); setBusy(false);
+      }
     }
   };
 
@@ -2792,19 +2828,52 @@ function LoginScreen() {
         <div className="mb-6 flex flex-col items-center text-center">
           <div className="mb-3 grid h-12 w-12 place-items-center rounded-xl bg-teal-700 text-white"><Package size={24} /></div>
           <div className="text-lg font-semibold text-slate-800">MedPark</div>
-          <div className="text-sm text-slate-400">Connexion à votre espace</div>
+          <div className="text-sm text-slate-400">{mode === "login" ? "Connexion à votre espace" : "Créer le compte de votre entreprise"}</div>
         </div>
+
+        <div className="mb-4 flex rounded-lg bg-slate-100 p-0.5 text-sm font-medium">
+          <button onClick={() => { setMode("login"); setError(""); }} className={`flex-1 rounded-md px-3 py-1.5 ${mode === "login" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}>Se connecter</button>
+          <button onClick={() => { setMode("signup"); setError(""); }} className={`flex-1 rounded-md px-3 py-1.5 ${mode === "signup" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}>Créer un compte</button>
+        </div>
+
         <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          {mode === "signup" && (
+            <Field label="Nom de l'entreprise">
+              <input autoFocus value={company} onChange={(e) => setCompany(e.target.value)} className={inputCls} placeholder="Ex : Loca Médical SARL" />
+            </Field>
+          )}
           <Field label="Email">
-            <input autoFocus type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} placeholder="vous@exemple.fr" />
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} placeholder="vous@exemple.fr" />
           </Field>
-          <Field label="Mot de passe">
+          <Field label="Mot de passe" hint={mode === "signup" ? "6 caractères minimum." : undefined}>
             <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} className={inputCls} placeholder="••••••••" />
           </Field>
+
+          {mode === "signup" && (
+            <div className="rounded-xl bg-slate-50 p-4">
+              <div className="mb-2 text-sm font-medium text-slate-700">Nombre d'accès</div>
+              <div className="flex items-center gap-3">
+                <button type="button" onClick={() => setNbAcces((n) => Math.max(1, n - 1))} className="grid h-8 w-8 place-items-center rounded-lg border border-slate-200 text-slate-600 hover:bg-white">−</button>
+                <span className="w-8 text-center text-lg font-semibold text-slate-800">{nbAcces}</span>
+                <button type="button" onClick={() => setNbAcces((n) => Math.min(50, n + 1))} className="grid h-8 w-8 place-items-center rounded-lg border border-slate-200 text-slate-600 hover:bg-white">+</button>
+                <span className="text-xs text-slate-400">× {PRIX_PAR_ACCES_MOIS} €/mois par accès</span>
+              </div>
+              <div className="mt-3 space-y-1 border-t border-slate-200 pt-3 text-sm">
+                <div className="flex items-center justify-between text-emerald-700"><span>{MOIS_ESSAI} premiers mois</span><span className="font-semibold">Gratuit</span></div>
+                <div className="flex items-center justify-between text-slate-600"><span>Ensuite, par mois</span><span className="font-semibold text-slate-800">{euros(mensuel(nbAcces))}</span></div>
+                <div className="flex items-center justify-between text-slate-500"><span>1<sup>er</sup> paiement (licence {euros(LICENCE_UNIQUE)} + 1 mois)</span><span className="font-medium">{euros(premierPaiement(nbAcces))}</span></div>
+              </div>
+            </div>
+          )}
+
           {error && <p className="text-sm text-rose-600">{error}</p>}
-          <button onClick={submit} disabled={!email.trim() || !password || busy} className="w-full rounded-lg bg-teal-700 px-4 py-2.5 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40">{busy ? "Connexion…" : "Se connecter"}</button>
+          <button onClick={submit} disabled={busy} className="w-full rounded-lg bg-teal-700 px-4 py-2.5 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40">
+            {busy ? "Veuillez patienter…" : mode === "login" ? "Se connecter" : `Démarrer l'essai gratuit`}
+          </button>
         </div>
-        <p className="mt-4 text-center text-[11px] leading-relaxed text-slate-400">Accès réservé. Vos identifiants vous sont fournis par MedPark.</p>
+        <p className="mt-4 text-center text-[11px] leading-relaxed text-slate-400">
+          {mode === "login" ? "Pas encore de compte ? Cliquez sur « Créer un compte »." : `Aucun paiement maintenant — essai gratuit de ${MOIS_ESSAI} mois.`}
+        </p>
       </div>
     </div>
   );
@@ -2887,7 +2956,7 @@ export default function App() {
   if (auth.status === "loading") {
     content = <div className="flex min-h-full w-full items-center justify-center text-sm text-slate-400">Chargement…</div>;
   } else if (auth.status === "out") {
-    content = <LoginScreen />;
+    content = <LoginScreen onAuthed={loadProfile} />;
   } else {
     const prof = auth.profile;
     if (preview) {
