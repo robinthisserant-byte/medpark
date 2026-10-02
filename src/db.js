@@ -440,3 +440,23 @@ export async function deleteAcces(id) {
   const { error } = await supabase.from("acces").update({ archived: true }).eq("id", id);
   if (error) throw error;
 }
+
+/* ------------------------------------------------------------------ *
+ *  ADMIN (toi) : voir toutes les entreprises inscrites et leurs accès.
+ * ------------------------------------------------------------------ */
+export async function listEtablissementsAdmin() {
+  const { data, error } = await supabase.from("etablissements").select("*").order("nom");
+  if (error) throw error;
+  return (data || []).map((r) => ({
+    id: r.id, nom: r.nom, identifiant: r.identifiant || "", code: r.code || "",
+    nbAcces: r.nb_acces || 1, statut: r.abo_statut || "essai", essaiFin: r.essai_fin || null,
+    archived: !!r.archived,
+  }));
+}
+
+export async function listAccesForEtb(etbId) {
+  const { data, error } = await supabase
+    .from("acces").select("*").eq("etablissement_id", etbId).eq("archived", false).order("nom");
+  if (error) throw error;
+  return (data || []).map(accesFromDb);
+}
