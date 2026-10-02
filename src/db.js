@@ -1,5 +1,14 @@
 import { supabase } from "./supabaseClient.js";
 
+// Toutes les sections du logiciel (droits par défaut d'un nouveau compte entreprise).
+const ALL_SECTIONS = ["reservations", "agenda", "tiers", "inventaire", "maintenance", "stats", "transport"];
+
+// Établissement de l'utilisateur connecté (rempli au login). Sert à ne montrer
+// que les données de SON entreprise. null pour l'admin (qui ne liste pas ces données).
+let _etbId = null;
+// Ajoute le filtre "mon établissement" à une requête, quand on en a un.
+function scope(q) { return _etbId ? q.eq("etablissement_id", _etbId) : q; }
+
 /* ------------------------------------------------------------------ *
  *  AUTHENTIFICATION (connexion réelle par email + mot de passe).
  * ------------------------------------------------------------------ */
@@ -33,10 +42,11 @@ export function onAuthChange(cb) {
 // son établissement (pour un client) et ses droits (sections autorisées).
 export async function getMyProfile() {
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
+  if (!user) { _etbId = null; return null; }
   const { data: membre, error } = await supabase
     .from("membres").select("*").eq("user_id", user.id).maybeSingle();
   if (error) throw error;
+  _etbId = (membre && membre.etablissement_id) || null;   // on mémorise l'établissement du compte
   let establishmentName = "";
   if (membre && membre.etablissement_id) {
     const { data: etb } = await supabase
@@ -44,6 +54,52 @@ export async function getMyProfile() {
     establishmentName = (etb && etb.nom) || "";
   }
   return { user, membre: membre || null, establishmentName };
+}
+
+// Inscription libre : une entreprise crée son compte, son espace est provisionné
+// avec 14 jours d'essai gratuit et le nombre d'accès choisi.
+export async function signUp(companyName, email, password, nbAcces) {
+  const { data, error } = await supabase.auth.signUp({ email, password });
+  if (error) throw error;
+  if (!data.session) return { needsConfirm: true };   // si la confirmation email est activée
+  // date de fin d'essai = aujourd'hui + 2 mois
+  const d = new Date(); d.setMonth(d.getMonth() + 2);
+  const essaiFin = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const base = (companyName || "entreprise").toLowerCase().normalize("NFD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30) || "entreprise";
+  const slug = base + "-" + Math.random().toString(36).slice(2, 6);   // suffixe pour éviter les doublons
+  const code = "ETB-" + Math.floor(1000 + Math.random() * 8999);
+  // 1) créer l'établissement de l'entreprise (avec son abonnement en période d'essai)
+  const { data: etb, error: e2 } = await supabase.from("etablissements").insert({
+    nom: companyName, identifiant: slug, code, archived: false,
+    nb_acces: nbAcces || 1, abo_statut: "essai", essai_fin: essaiFin,
+  }).select().single();
+  if (e2) throw e2;
+  // 2) rattacher l'utilisateur à cet établissement (compte client, tous les droits)
+  const { error: e3 } = await supabase.from("membres").insert({
+    user_id: data.user.id, role: "client", etablissement_id: etb.id, sections: ALL_SECTIONS, label: companyName,
+  });
+  if (e3) throw e3;
+  _etbId = etb.id;
+  return { ok: true };
+}
+
+// Abonnement de mon entreprise (nombre d'accès, statut, fin d'essai).
+export async function getMyAbonnement() {
+  const id = await getEtablissementId();
+  if (!id) return null;
+  const { data, error } = await supabase
+    .from("etablissements").select("nb_acces, abo_statut, essai_fin").eq("id", id).maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return { nbAcces: data.nb_acces || 1, statut: data.abo_statut || "essai", essaiFin: data.essai_fin || null };
+}
+
+// Modifie le nombre d'accès de mon entreprise (change le prix mensuel).
+export async function setNbAcces(nbAcces) {
+  const id = await getEtablissementId();
+  if (!id) return;
+  const { error } = await supabase.from("etablissements").update({ nb_acces: nbAcces }).eq("id", id);
+  if (error) throw error;
 }
 
 /* ------------------------------------------------------------------ *
@@ -95,25 +151,26 @@ function produitToDb(f, etbId) {
   };
 }
 
-// Récupère l'identifiant de l'établissement (un seul pour l'instant : le client pilote).
+// Identifiant de l'établissement de l'utilisateur connecté (son entreprise).
 export async function getEtablissementId() {
-  const { data, error } = await supabase.from("etablissements").select("id").limit(1).maybeSingle();
-  if (error) throw error;
-  return data ? data.id : null;
+  if (_etbId) return _etbId;
+  // au cas où le profil n'aurait pas encore été chargé
+  const prof = await getMyProfile();
+  return prof && prof.membre ? prof.membre.etablissement_id : null;
 }
 
-// Liste les entrepôts (pour les menus déroulants et l'affichage).
+// Liste les entrepôts de mon entreprise (pour les menus déroulants et l'affichage).
 export async function listEntrepots() {
-  const { data, error } = await supabase
-    .from("entrepots").select("*").eq("archived", false).order("nom");
+  const { data, error } = await scope(
+    supabase.from("entrepots").select("*").eq("archived", false).order("nom"));
   if (error) throw error;
   return (data || []).map((r) => ({ id: r.id, name: r.nom, address: r.adresse }));
 }
 
-// Liste tous les matériels.
+// Liste tous les matériels de mon entreprise.
 export async function listProduits() {
-  const { data, error } = await supabase
-    .from("produits").select("*").order("created_at", { ascending: false });
+  const { data, error } = await scope(
+    supabase.from("produits").select("*").order("created_at", { ascending: false }));
   if (error) throw error;
   return (data || []).map(produitFromDb);
 }
@@ -142,8 +199,8 @@ export async function setProduitArchived(id, archived) {
 
 // Liste uniquement les matériels archivés (pour l'écran "Tiers archivés").
 export async function listProduitsArchived() {
-  const { data, error } = await supabase
-    .from("produits").select("*").eq("archived", true).order("nom");
+  const { data, error } = await scope(
+    supabase.from("produits").select("*").eq("archived", true).order("nom"));
   if (error) throw error;
   return (data || []).map(produitFromDb);
 }
@@ -165,7 +222,7 @@ function tiersFromDb(r) {
 
 export async function listTiers(kind) {
   const t = TIERS[kind];
-  const { data, error } = await supabase.from(t.table).select("*").eq("archived", false).order("nom");
+  const { data, error } = await scope(supabase.from(t.table).select("*").eq("archived", false).order("nom"));
   if (error) throw error;
   return (data || []).map(tiersFromDb);
 }
@@ -196,7 +253,7 @@ export async function archiveTiers(kind, id) {
 // Liste les tiers archivés d'un type donné (pour l'écran "Tiers archivés").
 export async function listTiersArchived(kind) {
   const t = TIERS[kind];
-  const { data, error } = await supabase.from(t.table).select("*").eq("archived", true).order("nom");
+  const { data, error } = await scope(supabase.from(t.table).select("*").eq("archived", true).order("nom"));
   if (error) throw error;
   return (data || []).map(tiersFromDb);
 }
@@ -249,8 +306,8 @@ function reservationToDb(f, etbId) {
 
 // Liste toutes les réservations (actives + archivées ; chaque écran filtre ensuite).
 export async function listReservations() {
-  const { data, error } = await supabase
-    .from("reservations").select("*").order("created_at", { ascending: false });
+  const { data, error } = await scope(
+    supabase.from("reservations").select("*").order("created_at", { ascending: false }));
   if (error) throw error;
   return (data || []).map(reservationFromDb);
 }
@@ -325,8 +382,8 @@ function transfertToDb(f, etbId) {
 
 // Liste tous les transferts (actifs + terminés ; chaque écran filtre ensuite).
 export async function listTransferts() {
-  const { data, error } = await supabase
-    .from("transferts").select("*").order("created_at", { ascending: false });
+  const { data, error } = await scope(
+    supabase.from("transferts").select("*").order("created_at", { ascending: false }));
   if (error) throw error;
   return (data || []).map(transfertFromDb);
 }
