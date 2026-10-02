@@ -236,6 +236,18 @@ export async function setProduitEntrepot(id, entrepotId) {
   if (error) throw error;
 }
 
+// Change le statut de maintenance d'un matériel ("ok" / "reparation").
+export async function setProduitMaintStatus(id, statut) {
+  const { error } = await supabase.from("produits").update({ statut_maint: statut }).eq("id", id);
+  if (error) throw error;
+}
+
+// Enregistre (ou efface) le plan de révision préventive d'un matériel.
+export async function setProduitRevision(id, revision) {
+  const { error } = await supabase.from("produits").update({ revision: revision || null }).eq("id", id);
+  if (error) throw error;
+}
+
 /* ------------------------------------------------------------------ *
  *  TRANSFERTS (table "transferts").
  *  Colonnes base : produit_id, depart_id, arrivee_id, date, archived.
