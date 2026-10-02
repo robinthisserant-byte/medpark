@@ -2360,7 +2360,7 @@ function Transport({ notify, archived }) {
 /* ================================================================== *
  *  ADMIN APP
  * ================================================================== */
-function AdminApp({ store, setStore, onPreview }) {
+function AdminApp({ store, setStore, onPreview, onLogout }) {
   const [selectedEtb, setSelectedEtb] = useState(null);
   const [toast, setToast] = useState(null);
   const notify = (m) => { setToast(m); setTimeout(() => setToast(null), 2400); };
@@ -2451,8 +2451,13 @@ function AdminApp({ store, setStore, onPreview }) {
           <div className="grid h-9 w-9 place-items-center rounded-lg bg-white/10"><Shield size={18} /></div>
           <div>
             <div className="text-sm font-semibold">Administration</div>
-            <div className="text-[11px] text-slate-400">Établissements & accès — application séparée</div>
+            <div className="text-[11px] text-slate-400">Établissements & accès</div>
           </div>
+          {onLogout && (
+            <button onClick={onLogout} className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-white/15 px-3 py-1.5 text-sm font-medium text-slate-200 hover:bg-white/10">
+              <LogOut size={15} /> Se déconnecter
+            </button>
+          )}
         </div>
       </div>
 
@@ -2763,35 +2768,23 @@ function Empty({ icon: Icon, msg }) {
 /* ================================================================== *
  *  LOGIN — two-step: establishment code, then personal access code
  * ================================================================== */
-function LoginScreen({ store, onLogin }) {
-  const [step, setStep] = useState(1);
-  const [etbIdent, setEtbIdent] = useState("");
-  const [etbCode, setEtbCode] = useState("");
-  const [accIdent, setAccIdent] = useState("");
-  const [accCode, setAccCode] = useState("");
-  const [etb, setEtb] = useState(null);
+function LoginScreen() {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
 
-  const submitEtb = () => {
-    const found = store.establishments.find((e) => !e.archived
-      && e.identifiant.toLowerCase() === etbIdent.trim().toLowerCase()
-      && e.code.toLowerCase() === etbCode.trim().toLowerCase());
-    if (!found) { setError("Identifiant ou code établissement incorrect."); return; }
-    setEtb(found); setError(""); setStep(2);
-  };
-  const submitAcc = () => {
-    const acc = store.accesses.find((a) => !a.archived && a.establishmentId === etb.id
-      && a.identifiant.toLowerCase() === accIdent.trim().toLowerCase()
-      && a.code.toLowerCase() === accCode.trim().toLowerCase());
-    if (!acc) { setError("Identifiant ou code d'accès incorrect."); return; }
-    if (acc.singleDevice && acc.activeDevice) {
-      setError(`Cet accès est déjà connecté sur un autre appareil (${acc.activeDevice}). Libérez-le depuis l'Administration.`);
-      return;
+  const submit = async () => {
+    if (!email.trim() || !password) return;
+    setBusy(true); setError("");
+    try {
+      await db.signIn(email.trim(), password);
+      // La connexion connecte l'utilisateur ; la racine recharge le profil automatiquement.
+    } catch (e) {
+      setError("Email ou mot de passe incorrect.");
+      setBusy(false);
     }
-    const deviceId = "Poste-" + Math.random().toString(16).slice(2, 6).toUpperCase();
-    onLogin(acc, etb, deviceId);
   };
-  const back = () => { setStep(1); setAccIdent(""); setAccCode(""); setError(""); };
 
   return (
     <div className="flex min-h-full w-full items-center justify-center bg-slate-100 px-4 py-12">
@@ -2799,54 +2792,37 @@ function LoginScreen({ store, onLogin }) {
         <div className="mb-6 flex flex-col items-center text-center">
           <div className="mb-3 grid h-12 w-12 place-items-center rounded-xl bg-teal-700 text-white"><Package size={24} /></div>
           <div className="text-lg font-semibold text-slate-800">MedPark</div>
-          <div className="text-sm text-slate-400">Connexion à l'espace de gestion</div>
+          <div className="text-sm text-slate-400">Connexion à votre espace</div>
         </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="mb-5 flex items-center gap-2">
-            <StepDot n={1} active={step === 1} done={step > 1} label="Établissement" />
-            <div className={`h-px flex-1 ${step > 1 ? "bg-teal-500" : "bg-slate-200"}`} />
-            <StepDot n={2} active={step === 2} done={false} label="Accès" />
-          </div>
-
-          {step === 1 ? (
-            <div className="space-y-4">
-              <Field label="Identifiant de l'établissement">
-                <input autoFocus value={etbIdent} onChange={(e) => setEtbIdent(e.target.value)} className={`${inputCls} plex-mono`} placeholder="chu-paris" />
-              </Field>
-              <Field label="Code de l'établissement" hint="Identifiant et code fournis par l'administrateur.">
-                <input value={etbCode} onChange={(e) => setEtbCode(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submitEtb()} className={`${inputCls} plex-mono uppercase tracking-widest`} placeholder="CHP-4821" />
-              </Field>
-              {error && <p className="text-sm text-rose-600">{error}</p>}
-              <button onClick={submitEtb} disabled={!etbIdent.trim() || !etbCode.trim()} className="w-full rounded-lg bg-teal-700 px-4 py-2.5 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40">Continuer</button>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2 rounded-lg bg-teal-50 px-3 py-2 text-sm text-teal-800">
-                <Building2 size={15} /> {etb.name}
-              </div>
-              <Field label="Votre identifiant d'accès">
-                <input autoFocus value={accIdent} onChange={(e) => setAccIdent(e.target.value)} className={`${inputCls} plex-mono`} placeholder="logistique" />
-              </Field>
-              <Field label="Votre code d'accès" hint="Propre à votre accès — ne le partagez pas.">
-                <input value={accCode} onChange={(e) => setAccCode(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submitAcc()} className={`${inputCls} plex-mono uppercase tracking-widest`} placeholder="LOG-2207" />
-              </Field>
-              {error && <p className="text-sm text-rose-600">{error}</p>}
-              <button onClick={submitAcc} disabled={!accIdent.trim() || !accCode.trim()} className="w-full rounded-lg bg-teal-700 px-4 py-2.5 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40">Se connecter</button>
-              <button onClick={back} className="w-full text-center text-xs text-slate-400 hover:text-slate-600">← Changer d'établissement</button>
-            </div>
-          )}
+        <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <Field label="Email">
+            <input autoFocus type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} placeholder="vous@exemple.fr" />
+          </Field>
+          <Field label="Mot de passe">
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} className={inputCls} placeholder="••••••••" />
+          </Field>
+          {error && <p className="text-sm text-rose-600">{error}</p>}
+          <button onClick={submit} disabled={!email.trim() || !password || busy} className="w-full rounded-lg bg-teal-700 px-4 py-2.5 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40">{busy ? "Connexion…" : "Se connecter"}</button>
         </div>
-
-        <p className="mt-4 text-center text-[11px] leading-relaxed text-slate-400">
-          Démo — établissement <span className="plex-mono">chu-paris</span> / <span className="plex-mono">CHP-4821</span>.<br />
-          Accès <span className="plex-mono">accueil</span> / <span className="plex-mono">ACR-5530</span> (libre).
-          <span className="plex-mono"> logistique</span> / <span className="plex-mono">LOG-2207</span> est occupé (blocage « 1 seul appareil »).
-        </p>
+        <p className="mt-4 text-center text-[11px] leading-relaxed text-slate-400">Accès réservé. Vos identifiants vous sont fournis par MedPark.</p>
       </div>
     </div>
   );
 }
+
+function NoAccess({ email, onLogout }) {
+  return (
+    <div className="flex min-h-full w-full items-center justify-center bg-slate-100 px-4 py-12">
+      <div className="w-full max-w-sm text-center">
+        <div className="mb-3 inline-grid h-12 w-12 place-items-center rounded-xl bg-amber-100 text-amber-700"><Shield size={24} /></div>
+        <div className="text-lg font-semibold text-slate-800">Compte non rattaché</div>
+        <p className="mt-2 text-sm text-slate-500">Le compte <span className="font-medium">{email}</span> n'est associé à aucun espace pour le moment. Contactez l'administrateur MedPark.</p>
+        <button onClick={onLogout} className="mt-5 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">Se déconnecter</button>
+      </div>
+    </div>
+  );
+}
+
 function StepDot({ n, active, done, label }) {
   return (
     <div className="flex items-center gap-2">
@@ -2867,9 +2843,8 @@ export default function App() {
     reservations: seedReservations, transfers: seedTransfers,
     establishments: seedEstablishments, accesses: seedAccesses,
   });
-  const [app, setApp] = useState("main");
   const [preview, setPreview] = useState(null);
-  const [session, setSession] = useState(null);
+  const [auth, setAuth] = useState({ status: "loading", profile: null });
 
   useEffect(() => {
     const link = document.createElement("link");
@@ -2885,49 +2860,56 @@ export default function App() {
     return () => { link.remove(); style.remove(); };
   }, []);
 
-  const switchApp = (v) => { setPreview(null); setApp(v); };
+  // Charge (ou recharge) le profil de l'utilisateur connecté.
+  const loadProfile = async () => {
+    try {
+      const session = await db.getSession();
+      if (!session) { setAuth({ status: "out", profile: null }); return; }
+      const profile = await db.getMyProfile();
+      setAuth({ status: "in", profile });
+    } catch (e) {
+      setAuth({ status: "out", profile: null });
+    }
+  };
+  useEffect(() => {
+    loadProfile();
+    const unsub = db.onAuthChange(() => loadProfile());
+    return unsub;
+  }, []);
+
+  const logout = async () => { setPreview(null); try { await db.signOut(); } catch (e) {} };
   const startPreview = (access, etb) => {
     setPreview({ sections: access.sections, establishmentId: etb.id, establishmentName: etb.name, accessLabel: access.label, code: access.code });
-    setApp("main");
   };
-  const exitPreview = () => { setPreview(null); setApp("admin"); };
+  const exitPreview = () => setPreview(null);
 
-  const handleLogin = (access, etb, deviceId) => {
-    setStore((s) => ({ ...s, accesses: s.accesses.map((a) => a.id === access.id ? { ...a, activeDevice: access.singleDevice ? deviceId : a.activeDevice } : a) }));
-    setSession({ accessId: access.id, deviceId, sections: access.sections, establishmentId: etb.id, establishmentName: etb.name, accessLabel: access.label, code: access.code });
-  };
-  const logout = () => {
-    if (session) setStore((s) => ({ ...s, accesses: s.accesses.map((a) => a.id === session.accessId ? { ...a, activeDevice: null } : a) }));
-    setSession(null);
-  };
-
-  // session stays in sync with admin actions (e.g. access rights changed, device released, archived)
-  const liveAccess = session ? store.accesses.find((a) => a.id === session.accessId) : null;
-  const sessionAccess = liveAccess && !liveAccess.archived
-    ? { ...session, sections: liveAccess.sections }
-    : session;
+  let content;
+  if (auth.status === "loading") {
+    content = <div className="flex min-h-full w-full items-center justify-center text-sm text-slate-400">Chargement…</div>;
+  } else if (auth.status === "out") {
+    content = <LoginScreen />;
+  } else {
+    const prof = auth.profile;
+    if (preview) {
+      content = <MainApp store={store} setStore={setStore} access={preview} mode="preview" onExit={exitPreview} />;
+    } else if (!prof || !prof.membre) {
+      content = <NoAccess email={prof && prof.user ? prof.user.email : ""} onLogout={logout} />;
+    } else if (prof.membre.role === "admin") {
+      content = <AdminApp store={store} setStore={setStore} onPreview={startPreview} onLogout={logout} />;
+    } else {
+      const access = {
+        sections: prof.membre.sections || [],
+        establishmentId: prof.membre.etablissement_id,
+        establishmentName: prof.establishmentName,
+        accessLabel: prof.membre.label || "Accès",
+      };
+      content = <MainApp store={store} setStore={setStore} access={access} mode="session" onExit={logout} />;
+    }
+  }
 
   return (
     <div className="pm-root flex h-screen w-full flex-col bg-slate-50 text-slate-800">
-      {/* prototype top bar — lets you preview both applications (démo uniquement) */}
-      <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 bg-white px-4 py-2">
-        <span className="text-[11px] font-medium uppercase tracking-wide text-slate-400">Prototype</span>
-        <div className="flex rounded-lg bg-slate-100 p-0.5">
-          {[["main", "Logiciel principal"], ["admin", "Administration"]].map(([v, l]) => (
-            <button key={v} onClick={() => switchApp(v)} className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${app === v ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>{l}</button>
-          ))}
-        </div>
-      </div>
-
-      <div className="min-h-0 flex-1">
-        {app === "admin"
-          ? <AdminApp store={store} setStore={setStore} onPreview={startPreview} />
-          : preview
-            ? <MainApp store={store} setStore={setStore} access={preview} mode="preview" onExit={exitPreview} />
-            : session
-              ? <MainApp store={store} setStore={setStore} access={sessionAccess} mode="session" onExit={logout} />
-              : <LoginScreen store={store} onLogin={handleLogin} />}
-      </div>
+      <div className="min-h-0 flex-1">{content}</div>
     </div>
   );
 }
