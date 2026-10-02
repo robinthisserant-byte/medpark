@@ -235,3 +235,54 @@ export async function setProduitEntrepot(id, entrepotId) {
   const { error } = await supabase.from("produits").update({ entrepot_id: entrepotId || null }).eq("id", id);
   if (error) throw error;
 }
+
+/* ------------------------------------------------------------------ *
+ *  TRANSFERTS (table "transferts").
+ *  Colonnes base : produit_id, depart_id, arrivee_id, date, archived.
+ * ------------------------------------------------------------------ */
+
+// base -> application
+function transfertFromDb(r) {
+  return {
+    id: r.id,
+    product: r.produit_id || "",
+    from: r.depart_id || "",
+    to: r.arrivee_id || "",
+    date: r.date,
+    archived: r.archived,
+    etb: r.etablissement_id,
+  };
+}
+
+// application -> base
+function transfertToDb(f, etbId) {
+  return {
+    etablissement_id: etbId,
+    produit_id: f.product || null,
+    depart_id: f.from || null,
+    arrivee_id: f.to || null,
+    date: f.date || null,
+  };
+}
+
+// Liste tous les transferts (actifs + terminés ; chaque écran filtre ensuite).
+export async function listTransferts() {
+  const { data, error } = await supabase
+    .from("transferts").select("*").order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data || []).map(transfertFromDb);
+}
+
+// Crée (planifie) un transfert.
+export async function createTransfert(f, etbId) {
+  const { data, error } = await supabase
+    .from("transferts").insert(transfertToDb(f, etbId)).select().single();
+  if (error) throw error;
+  return transfertFromDb(data);
+}
+
+// Archive ou désarchive un transfert.
+export async function setTransfertArchived(id, archived) {
+  const { error } = await supabase.from("transferts").update({ archived }).eq("id", id);
+  if (error) throw error;
+}
