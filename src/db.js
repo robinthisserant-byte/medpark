@@ -401,3 +401,42 @@ export async function setTransfertArchived(id, archived) {
   const { error } = await supabase.from("transferts").update({ archived }).eq("id", id);
   if (error) throw error;
 }
+
+/* ------------------------------------------------------------------ *
+ *  ACCÈS (table "acces") : les "sièges" d'une entreprise.
+ *  Chacun a un nom, un code (pour ouvrir le logiciel) et des droits.
+ * ------------------------------------------------------------------ */
+function accesFromDb(r) {
+  let sections = [];
+  try { sections = r.droits ? JSON.parse(r.droits) : []; } catch (e) { sections = []; }
+  if (!sections || !sections.length) sections = ALL_SECTIONS;
+  return { id: r.id, label: r.nom || "Accès", code: r.code || "", sections };
+}
+
+// Liste les accès de mon entreprise.
+export async function listAcces() {
+  const { data, error } = await scope(supabase.from("acces").select("*").eq("archived", false).order("nom"));
+  if (error) throw error;
+  return (data || []).map(accesFromDb);
+}
+
+// Crée un accès (génère un code à 6 chiffres).
+export async function createAcces(label, sections) {
+  const etbId = await getEtablissementId();
+  const code = Math.floor(100000 + Math.random() * 899999).toString();
+  const slug = (label || "acces").toLowerCase().normalize("NFD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 20) || "acces";
+  const ident = slug + "-" + Math.random().toString(36).slice(2, 5);
+  const row = {
+    etablissement_id: etbId, nom: label, code, identifiant: ident,
+    droits: JSON.stringify(sections && sections.length ? sections : ALL_SECTIONS), archived: false,
+  };
+  const { data, error } = await supabase.from("acces").insert(row).select().single();
+  if (error) throw error;
+  return accesFromDb(data);
+}
+
+// Supprime (archive) un accès.
+export async function deleteAcces(id) {
+  const { error } = await supabase.from("acces").update({ archived: true }).eq("id", id);
+  if (error) throw error;
+}
