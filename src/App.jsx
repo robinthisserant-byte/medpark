@@ -448,10 +448,10 @@ function MainApp({ store, setStore, access, mode, onExit }) {
           {view === "tiers-partenaires" && <TiersSimple store={scoped} setStore={setStore} notify={notify} kind="partenaires" etbId={etbId} />}
           {view === "tiers-lieux" && <TiersSimple store={scoped} setStore={setStore} notify={notify} kind="warehouses" etbId={etbId} />}
           {view === "tiers-archive" && <TiersArchive notify={notify} />}
-          {view === "inventaire-stock" && <Inventaire store={scoped} setStore={setStore} notify={notify} helpers={{ whName }} />}
-          {view === "maintenance-parc" && <Maintenance store={scoped} setStore={setStore} notify={notify} mode="parc" />}
-          {view === "maintenance-revisions" && <Maintenance store={scoped} setStore={setStore} notify={notify} mode="revisions" />}
-          {view === "stats-vue" && <Stats store={scoped} helpers={{ productName }} />}
+          {view === "inventaire-stock" && <Inventaire notify={notify} />}
+          {view === "maintenance-parc" && <Maintenance notify={notify} mode="parc" />}
+          {view === "maintenance-revisions" && <Maintenance notify={notify} mode="revisions" />}
+          {view === "stats-vue" && <Stats notify={notify} />}
           {view === "transport-current" && <Transport notify={notify} archived={false} />}
           {view === "transport-magasinier" && <Magasinier notify={notify} />}
           {view === "transport-archive" && <Transport notify={notify} archived={true} />}
@@ -1520,18 +1520,37 @@ function TiersArchive({ notify }) {
 }
 
 /* ================== Inventaire ================== */
-function Inventaire({ store, setStore, notify, helpers }) {
-  const { whName } = helpers;
+function Inventaire({ notify }) {
   const [whFilter, setWhFilter] = useState("");
   const [correct, setCorrect] = useState(null);
   const [newWh, setNewWh] = useState("");
 
-  const warehouses = store.warehouses.filter((w) => !w.archived);
-  const products = store.products.filter((p) => !p.archived);
-  const isOut = (pid) => store.reservations.some((r) => r.product === pid && !r.archived && r.start <= TODAY && TODAY <= r.end);
+  const [allProducts, setAllProducts] = useState([]);
+  const [allWarehouses, setAllWarehouses] = useState([]);
+  const [reservations, setReservations] = useState([]);
 
-  const doCorrect = () => {
-    setStore((s) => ({ ...s, products: s.products.map((p) => p.id === correct.id ? { ...p, warehouse: newWh } : p) }));
+  const reload = async () => {
+    try {
+      const [prods, whs, res] = await Promise.all([
+        db.listProduits(), db.listEntrepots(), db.listReservations(),
+      ]);
+      setAllProducts(prods); setAllWarehouses(whs); setReservations(res);
+    } catch (e) {
+      notify("Erreur de connexion à la base : " + e.message);
+    }
+  };
+  useEffect(() => { reload(); }, []);
+
+  const whName = (id) => allWarehouses.find((w) => w.id === id)?.name || id;
+  const warehouses = allWarehouses.filter((w) => !w.archived);
+  const products = allProducts.filter((p) => !p.archived);
+  const isOut = (pid) => reservations.some((r) => r.product === pid && !r.archived && r.start <= TODAY && TODAY <= r.end);
+
+  const doCorrect = async () => {
+    try {
+      await db.setProduitEntrepot(correct.id, newWh);
+      await reload();
+    } catch (e) { notify("Erreur : " + e.message); return; }
     notify(`Emplacement de ${correct.name} corrigé.`);
     setCorrect(null); setNewWh("");
   };
@@ -1622,9 +1641,22 @@ function Inventaire({ store, setStore, notify, helpers }) {
 }
 
 /* ================== Maintenance : réparations & révisions ================== */
-function Maintenance({ store, setStore, notify, mode }) {
-  const products = store.products.filter((p) => !p.archived);
-  const usageCount = (pid) => store.reservations.filter((r) => r.product === pid).length;
+function Maintenance({ notify, mode }) {
+  const [allProducts, setAllProducts] = useState([]);
+  const [reservations, setReservations] = useState([]);
+
+  const reload = async () => {
+    try {
+      const [prods, res] = await Promise.all([db.listProduits(), db.listReservations()]);
+      setAllProducts(prods); setReservations(res);
+    } catch (e) {
+      notify("Erreur de connexion à la base : " + e.message);
+    }
+  };
+  useEffect(() => { reload(); }, []);
+
+  const products = allProducts.filter((p) => !p.archived);
+  const usageCount = (pid) => reservations.filter((r) => r.product === pid).length;
   const monthsBetween = (isoA, isoB) => { const a = parseISO(isoA), b = parseISO(isoB); return (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth()); };
   const revisionDue = (p) => {
     if (!p.revision) return false;
@@ -1644,19 +1676,28 @@ function Maintenance({ store, setStore, notify, mode }) {
   const [planFor, setPlanFor] = useState(null);
   const [pf, setPf] = useState({ mode: "temps", every: 6 });
 
-  const toggleRepair = (p) => {
-    setStore((s) => ({ ...s, products: s.products.map((x) => x.id === p.id ? { ...x, maintStatus: x.maintStatus === "reparation" ? "ok" : "reparation" } : x) }));
+  const toggleRepair = async (p) => {
+    try {
+      await db.setProduitMaintStatus(p.id, p.maintStatus === "reparation" ? "ok" : "reparation");
+      await reload();
+    } catch (e) { notify("Erreur : " + e.message); return; }
     notify(p.maintStatus === "reparation" ? "Matériel remis en service." : "Matériel mis en réparation.");
   };
   const openPlan = (p) => { setPlanFor(p); setPf(p.revision ? { mode: p.revision.mode, every: p.revision.every } : { mode: "temps", every: 6 }); };
-  const savePlan = () => {
+  const savePlan = async () => {
     const rev = pf.mode === "temps" ? { mode: "temps", every: Number(pf.every), lastDate: TODAY } : { mode: "usages", every: Number(pf.every), lastCount: usageCount(planFor.id) };
-    setStore((s) => ({ ...s, products: s.products.map((x) => x.id === planFor.id ? { ...x, revision: rev } : x) }));
+    try {
+      await db.setProduitRevision(planFor.id, rev);
+      await reload();
+    } catch (e) { notify("Erreur : " + e.message); return; }
     notify("Révision planifiée."); setPlanFor(null);
   };
-  const markRevised = (p) => {
+  const markRevised = async (p) => {
     const rev = p.revision.mode === "temps" ? { ...p.revision, lastDate: TODAY } : { ...p.revision, lastCount: usageCount(p.id) };
-    setStore((s) => ({ ...s, products: s.products.map((x) => x.id === p.id ? { ...x, revision: rev } : x) }));
+    try {
+      await db.setProduitRevision(p.id, rev);
+      await reload();
+    } catch (e) { notify("Erreur : " + e.message); return; }
     notify("Révision enregistrée — compteur remis à zéro.");
   };
 
@@ -1849,15 +1890,28 @@ function Magasinier({ notify }) {
 }
 
 /* ================== Statistiques ================== */
-function Stats({ store, helpers }) {
-  const { productName } = helpers;
-  const products = store.products.filter((p) => !p.archived);
-  const usage = (pid) => store.reservations.filter((r) => r.product === pid).length;
+function Stats({ notify }) {
+  const [allProducts, setAllProducts] = useState([]);
+  const [reservations, setReservations] = useState([]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [prods, res] = await Promise.all([db.listProduits(), db.listReservations()]);
+        setAllProducts(prods); setReservations(res);
+      } catch (e) {
+        if (notify) notify("Erreur de connexion à la base : " + e.message);
+      }
+    })();
+  }, []);
+
+  const products = allProducts.filter((p) => !p.archived);
+  const usage = (pid) => reservations.filter((r) => r.product === pid).length;
   const eur = (n) => `${(n || 0).toLocaleString("fr-FR")} €`;
 
   const totalValue = products.reduce((a, p) => a + (Number(p.prix) || 0), 0);
-  const outNow = products.filter((p) => store.reservations.some((r) => r.product === p.id && !r.archived && r.start <= TODAY && TODAY <= r.end)).length;
-  const resTotal = store.reservations.length;
+  const outNow = products.filter((p) => reservations.some((r) => r.product === p.id && !r.archived && r.start <= TODAY && TODAY <= r.end)).length;
+  const resTotal = reservations.length;
   const ranked = products.map((p) => ({ p, u: usage(p.id) })).sort((a, b) => b.u - a.u);
   const maxU = Math.max(1, ...ranked.map((r) => r.u));
   const byCat = {};
