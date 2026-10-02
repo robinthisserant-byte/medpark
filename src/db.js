@@ -1,6 +1,52 @@
 import { supabase } from "./supabaseClient.js";
 
 /* ------------------------------------------------------------------ *
+ *  AUTHENTIFICATION (connexion réelle par email + mot de passe).
+ * ------------------------------------------------------------------ */
+
+// Connexion.
+export async function signIn(email, password) {
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) throw error;
+  return data;
+}
+
+// Déconnexion.
+export async function signOut() {
+  const { error } = await supabase.auth.signOut();
+  if (error) throw error;
+}
+
+// Session en cours (ou null si personne n'est connecté).
+export async function getSession() {
+  const { data } = await supabase.auth.getSession();
+  return data.session;
+}
+
+// S'abonne aux changements de connexion (connexion / déconnexion). Renvoie une fonction pour se désabonner.
+export function onAuthChange(cb) {
+  const { data } = supabase.auth.onAuthStateChange((_event, session) => cb(session));
+  return () => { try { data.subscription.unsubscribe(); } catch (e) {} };
+}
+
+// Récupère le profil de l'utilisateur connecté : son rôle (admin/client),
+// son établissement (pour un client) et ses droits (sections autorisées).
+export async function getMyProfile() {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+  const { data: membre, error } = await supabase
+    .from("membres").select("*").eq("user_id", user.id).maybeSingle();
+  if (error) throw error;
+  let establishmentName = "";
+  if (membre && membre.etablissement_id) {
+    const { data: etb } = await supabase
+      .from("etablissements").select("nom").eq("id", membre.etablissement_id).maybeSingle();
+    establishmentName = (etb && etb.nom) || "";
+  }
+  return { user, membre: membre || null, establishmentName };
+}
+
+/* ------------------------------------------------------------------ *
  *  db.js — le "traducteur" entre l'application et la base Supabase.
  *  Les colonnes de la base sont en français (nom, n_parc, entrepot_id…),
  *  l'application utilise d'autres noms (name, numParc, warehouse…).
