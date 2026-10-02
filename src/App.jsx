@@ -452,9 +452,9 @@ function MainApp({ store, setStore, access, mode, onExit }) {
           {view === "maintenance-parc" && <Maintenance store={scoped} setStore={setStore} notify={notify} mode="parc" />}
           {view === "maintenance-revisions" && <Maintenance store={scoped} setStore={setStore} notify={notify} mode="revisions" />}
           {view === "stats-vue" && <Stats store={scoped} helpers={{ productName }} />}
-          {view === "transport-current" && <Transport store={scoped} setStore={setStore} notify={notify} archived={false} helpers={{ productName, whName }} etbId={etbId} />}
-          {view === "transport-magasinier" && <Magasinier store={scoped} helpers={{ productName, patientName, whName }} />}
-          {view === "transport-archive" && <Transport store={scoped} setStore={setStore} notify={notify} archived={true} helpers={{ productName, whName }} etbId={etbId} />}
+          {view === "transport-current" && <Transport notify={notify} archived={false} />}
+          {view === "transport-magasinier" && <Magasinier notify={notify} />}
+          {view === "transport-archive" && <Transport notify={notify} archived={true} />}
         </div>
       </main>
 
@@ -1748,11 +1748,33 @@ function Maintenance({ store, setStore, notify, mode }) {
 }
 
 /* ================== Vue magasinier (logistique consolidée) ================== */
-function Magasinier({ store, helpers }) {
-  const { productName, patientName, whName } = helpers;
-  const parc = (pid) => store.products.find((p) => p.id === pid)?.numParc || "—";
+function Magasinier({ notify }) {
+  const [products, setProducts] = useState([]);
+  const [patients, setPatients] = useState([]);
+  const [warehouses, setWarehouses] = useState([]);
+  const [reservations, setReservations] = useState([]);
+  const [transfers, setTransfers] = useState([]);
   const [typeFilter, setTypeFilter] = useState("");
   const [whFilter, setWhFilter] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [prods, pats, whs, res, trf] = await Promise.all([
+          db.listProduits(), db.listTiers("patients"), db.listEntrepots(), db.listReservations(), db.listTransferts(),
+        ]);
+        setProducts(prods); setPatients(pats); setWarehouses(whs); setReservations(res); setTransfers(trf);
+      } catch (e) {
+        if (notify) notify("Erreur de connexion à la base : " + e.message);
+      }
+    })();
+  }, []);
+
+  const productName = (id) => products.find((p) => p.id === id)?.name || id;
+  const patientName = (id) => patients.find((p) => p.id === id)?.name || id;
+  const whName = (id) => warehouses.find((w) => w.id === id)?.name || id;
+  const store = { products, patients, warehouses, reservations, transfers };
+  const parc = (pid) => products.find((p) => p.id === pid)?.numParc || "—";
 
   const moves = [];
   store.transfers.filter((t) => !t.archived).forEach((t) =>
@@ -2107,28 +2129,55 @@ function MonAbonnement({ store, setStore, notify, etbId }) {
 }
 
 /* ================== Transport ================== */
-function Transport({ store, setStore, notify, archived, helpers, etbId }) {
-  const { productName, whName } = helpers;
+function Transport({ notify, archived }) {
   const [open, setOpen] = useState(false);
   const [f, setF] = useState({ product: "", from: "", to: "", date: "" });
   const [fromFilter, setFromFilter] = useState("");
 
-  const submit = () => {
-    const id = newId("TRF");
-    setStore((s) => ({ ...s, transfers: [{ id, ...f, etb: etbId, archived: false }, ...s.transfers] }));
-    notify(`Transfert ${id} planifié.`);
+  const [products, setProducts] = useState([]);
+  const [warehouses, setWarehouses] = useState([]);
+  const [reservations, setReservations] = useState([]);
+  const [transfers, setTransfers] = useState([]);
+  const [etbId, setEtbId] = useState(null);
+
+  // Charge produits, lieux, réservations et transferts depuis la base.
+  const reload = async () => {
+    try {
+      const [prods, whs, res, trf, eid] = await Promise.all([
+        db.listProduits(), db.listEntrepots(), db.listReservations(), db.listTransferts(), db.getEtablissementId(),
+      ]);
+      setProducts(prods); setWarehouses(whs); setReservations(res); setTransfers(trf); setEtbId(eid);
+    } catch (e) {
+      notify("Erreur de connexion à la base : " + e.message);
+    }
+  };
+  useEffect(() => { reload(); }, []);
+
+  const productName = (id) => products.find((p) => p.id === id)?.name || id;
+  const whName = (id) => warehouses.find((w) => w.id === id)?.name || id;
+  const store = { products, warehouses, reservations, transfers };
+
+  const submit = async () => {
+    try {
+      await db.createTransfert(f, etbId);
+      await reload();
+    } catch (e) { notify("Erreur : " + e.message); return; }
+    notify("Transfert planifié.");
     setOpen(false); setF({ product: "", from: "", to: "", date: "" });
   };
-  const complete = (t) => {
-    setStore((s) => ({
-      ...s,
-      transfers: s.transfers.map((x) => x.id === t.id ? { ...x, archived: true } : x),
-      products: s.products.map((p) => p.id === t.product ? { ...p, warehouse: t.to } : p),
-    }));
+  const complete = async (t) => {
+    try {
+      await db.setTransfertArchived(t.id, true);
+      await db.setProduitEntrepot(t.product, t.to);
+      await reload();
+    } catch (e) { notify("Erreur : " + e.message); return; }
     notify("Transfert effectué — stock mis à jour.");
   };
-  const restore = (t) => {
-    setStore((s) => ({ ...s, transfers: s.transfers.map((x) => x.id === t.id ? { ...x, archived: false } : x) }));
+  const restore = async (t) => {
+    try {
+      await db.setTransfertArchived(t.id, false);
+      await reload();
+    } catch (e) { notify("Erreur : " + e.message); return; }
     notify("Transfert désarchivé — de nouveau planifié.");
   };
 
@@ -2137,30 +2186,32 @@ function Transport({ store, setStore, notify, archived, helpers, etbId }) {
   const suggestions = useMemo(() => {
     if (archived) return [];
     const earliestByProduct = {};
-    store.reservations.filter((r) => !r.archived).forEach((r) => {
+    reservations.filter((r) => !r.archived).forEach((r) => {
       const cur = earliestByProduct[r.product];
       if (!cur || r.start < cur.start) earliestByProduct[r.product] = r;
     });
     const out = [];
     Object.values(earliestByProduct).forEach((r) => {
-      const prod = store.products.find((p) => p.id === r.product);
+      const prod = products.find((p) => p.id === r.product);
       if (!prod || prod.archived) return;
       if (prod.warehouse === r.warehouse) return;
-      const already = store.transfers.find((t) => !t.archived && t.product === r.product && t.to === r.warehouse);
+      const already = transfers.find((t) => !t.archived && t.product === r.product && t.to === r.warehouse);
       if (already) return;
       out.push({ product: r.product, from: prod.warehouse, to: r.warehouse, before: r.start });
     });
     return out.sort((a, b) => a.before.localeCompare(b.before));
-  }, [archived, store.reservations, store.products, store.transfers]);
+  }, [archived, reservations, products, transfers]);
 
-  const planSuggested = (sug) => {
-    const id = newId("TRF");
-    setStore((s) => ({ ...s, transfers: [{ id, product: sug.product, from: sug.from, to: sug.to, date: dayBefore(sug.before), etb: etbId, archived: false }, ...s.transfers] }));
-    notify(`Transfert ${id} planifié pour le ${fmtFR(dayBefore(sug.before))}.`);
+  const planSuggested = async (sug) => {
+    try {
+      await db.createTransfert({ product: sug.product, from: sug.from, to: sug.to, date: dayBefore(sug.before) }, etbId);
+      await reload();
+    } catch (e) { notify("Erreur : " + e.message); return; }
+    notify(`Transfert planifié pour le ${fmtFR(dayBefore(sug.before))}.`);
   };
 
   const visibleSuggestions = fromFilter ? suggestions.filter((s) => s.from === fromFilter) : suggestions;
-  const rows = store.transfers.filter((t) => t.archived === archived && (!fromFilter || t.from === fromFilter));
+  const rows = transfers.filter((t) => t.archived === archived && (!fromFilter || t.from === fromFilter));
 
   return (
     <div>
