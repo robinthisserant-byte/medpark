@@ -303,8 +303,6 @@ function MainApp({ store, setStore, access, mode, onExit }) {
   const [open, setOpen] = useState(() => Object.fromEntries(NAV.map((s) => [s.id, true])));
   const [view, setView] = useState(NAV[0]?.subs[0]?.id || "res-list");
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [showAcces, setShowAcces] = useState(false);
-  const [acTab, setAcTab] = useState("acces");
   const [toast, setToast] = useState(null);
 
   // Data is scoped to the current establishment: all accesses of the same
@@ -325,39 +323,6 @@ function MainApp({ store, setStore, access, mode, onExit }) {
   const patientName = (id) => scoped.patients.find((p) => p.id === id)?.name || id;
   const whName = (id) => scoped.warehouses.find((w) => w.id === id)?.name || id;
 
-  if (showAcces) {
-    return (
-      <div className="flex h-full min-h-0 w-full overflow-hidden bg-slate-50">
-        <aside className="flex w-64 shrink-0 flex-col border-r border-slate-200 bg-white">
-          <div className="border-b border-slate-100 px-4 py-4">
-            <button onClick={() => setShowAcces(false)} className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-800"><ChevronLeft size={17} /> Retour</button>
-          </div>
-          <div className="px-4 py-4">
-            <div className="mb-3 flex items-center gap-2.5">
-              <div className="grid h-9 w-9 place-items-center rounded-lg bg-teal-700 text-white"><Building2 size={17} /></div>
-              <div className="min-w-0">
-                <div className="text-sm font-semibold text-slate-800">Mon établissement</div>
-                <div className="truncate text-[11px] text-teal-700">{access.establishmentName}</div>
-              </div>
-            </div>
-            <div className="space-y-1">
-              <button onClick={() => setAcTab("acces")} className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm font-medium ${acTab === "acces" ? "bg-teal-50 text-teal-800" : "text-slate-600 hover:bg-slate-50"}`}><KeyRound size={16} className={acTab === "acces" ? "text-teal-600" : "text-slate-400"} /> Accès de l'établissement</button>
-              <button onClick={() => setAcTab("abonnement")} className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm font-medium ${acTab === "abonnement" ? "bg-teal-50 text-teal-800" : "text-slate-600 hover:bg-slate-50"}`}><CreditCard size={16} className={acTab === "abonnement" ? "text-teal-600" : "text-slate-400"} /> Mon abonnement</button>
-            </div>
-          </div>
-        </aside>
-        <main className="flex-1 overflow-y-auto">
-          <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/90 px-4 py-3 text-sm text-slate-400 backdrop-blur md:px-6">{acTab === "abonnement" ? "Mon abonnement" : "Gestion des accès"}</header>
-          <div className="px-4 py-6 md:px-8">
-            {acTab === "abonnement"
-              ? <MonAbonnement notify={notify} />
-              : <GestionAcces store={store} setStore={setStore} notify={notify} etbId={etbId} />}
-          </div>
-        </main>
-        {toast && <div className="fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-full bg-slate-900 px-4 py-2 text-sm text-white shadow-lg">{toast}</div>}
-      </div>
-    );
-  }
 
   return (
     <div className="flex h-full min-h-0 w-full overflow-hidden bg-slate-50">
@@ -411,16 +376,15 @@ function MainApp({ store, setStore, access, mode, onExit }) {
         </nav>
         <div className="border-t border-slate-100 px-4 py-3">
           <div className="flex items-center gap-2.5">
-            <button onClick={() => setShowAcces(true)} title="Gérer les accès" className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg p-1 text-left hover:bg-slate-50">
+            <div className="flex min-w-0 flex-1 items-center gap-2.5 p-1">
               <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-slate-100 text-slate-500"><CircleUser size={18} /></div>
               <div className="min-w-0 flex-1">
                 <div className="truncate text-[13px] font-medium text-slate-700">{access.accessLabel}</div>
                 <div className="plex-mono truncate text-[11px] text-slate-400">{access.establishmentName}</div>
               </div>
-              <ChevronRight size={14} className="shrink-0 text-slate-300" />
-            </button>
-            {mode === "session" && (
-              <button onClick={onExit} title="Se déconnecter" className="shrink-0 rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><LogOut size={16} /></button>
+            </div>
+            {onExit && (
+              <button onClick={onExit} title={mode === "preview" ? "Quitter l'aperçu" : "Quitter le logiciel"} className="shrink-0 rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><LogOut size={16} /></button>
             )}
           </div>
         </div>
@@ -2906,6 +2870,201 @@ function StepDot({ n, active, done, label }) {
 /* ================================================================== *
  *  ROOT — login → main app, plus a separate admin app
  * ================================================================== */
+/* ================================================================== *
+ *  ESPACE ENTREPRISE — gestion des accès + entrée dans le logiciel
+ * ================================================================== */
+function ClientSpace({ store, setStore, profile, onLogout }) {
+  const establishmentName = profile.establishmentName;
+  const etbId = profile.membre.etablissement_id;
+  const [active, setActive] = useState(null);   // accès sélectionné -> logiciel
+
+  if (active) {
+    return (
+      <MainApp
+        store={store} setStore={setStore}
+        access={{ sections: active.sections, establishmentId: etbId, establishmentName, accessLabel: active.label }}
+        mode="session"
+        onExit={() => setActive(null)}
+      />
+    );
+  }
+  return <AccesGate establishmentName={establishmentName} onEnter={setActive} onLogout={onLogout} />;
+}
+
+function AccesGate({ establishmentName, onEnter, onLogout }) {
+  const [tab, setTab] = useState("acces");          // acces | abonnement
+  const [list, setList] = useState([]);
+  const [nbMax, setNbMax] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [toast, setToast] = useState(null);
+  const notify = (m) => { setToast(m); setTimeout(() => setToast(null), 2600); };
+
+  // création d'un accès
+  const [open, setOpen] = useState(false);
+  const blank = { label: "", mode: "full", sections: SECTIONS.map((s) => s.id) };
+  const [af, setAf] = useState(blank);
+  // entrée dans le logiciel (code)
+  const [enterFor, setEnterFor] = useState(null);
+  const [codeInput, setCodeInput] = useState("");
+  const [codeErr, setCodeErr] = useState("");
+
+  const reload = async () => {
+    setLoading(true);
+    try {
+      const [acc, abo] = await Promise.all([db.listAcces(), db.getMyAbonnement()]);
+      setList(acc); setNbMax(abo ? abo.nbAcces : 1);
+    } catch (e) { notify("Erreur de connexion à la base : " + e.message); }
+    setLoading(false);
+  };
+  useEffect(() => { reload(); }, []);
+
+  const used = list.length;
+  const restants = Math.max(0, nbMax - used);
+
+  const openNew = () => { setAf(blank); setOpen(true); };
+  const saveNew = async () => {
+    const sections = af.mode === "full" ? SECTIONS.map((s) => s.id) : af.sections;
+    try {
+      await db.createAcces(af.label.trim(), sections);
+      await reload();
+      notify("Accès créé.");
+    } catch (e) { notify("Erreur : " + e.message); return; }
+    setOpen(false);
+  };
+  const remove = async (a) => {
+    try { await db.deleteAcces(a.id); await reload(); notify("Accès supprimé."); }
+    catch (e) { notify("Erreur : " + e.message); }
+  };
+  const askCode = (a) => { setEnterFor(a); setCodeInput(""); setCodeErr(""); };
+  const confirmCode = () => {
+    if (codeInput.trim() === String(enterFor.code)) { onEnter(enterFor); }
+    else setCodeErr("Code incorrect.");
+  };
+
+  return (
+    <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-slate-50">
+      <header className="flex items-center gap-3 border-b border-slate-200 bg-white px-5 py-3">
+        <div className="grid h-9 w-9 place-items-center rounded-lg bg-teal-700 text-white"><Package size={18} /></div>
+        <div className="min-w-0">
+          <div className="text-sm font-semibold leading-tight text-slate-800">MedPark</div>
+          <div className="truncate text-[11px] font-medium text-teal-700">{establishmentName}</div>
+        </div>
+        <div className="ml-6 flex rounded-lg bg-slate-100 p-0.5 text-sm font-medium">
+          <button onClick={() => setTab("acces")} className={`rounded-md px-3 py-1.5 ${tab === "acces" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}>Mes accès</button>
+          <button onClick={() => setTab("abonnement")} className={`rounded-md px-3 py-1.5 ${tab === "abonnement" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}>Mon abonnement</button>
+        </div>
+        <button onClick={onLogout} className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50"><LogOut size={15} /> Se déconnecter</button>
+      </header>
+
+      <div className="flex-1 overflow-y-auto px-4 py-6 md:px-8">
+        <div className="mx-auto max-w-4xl">
+          {tab === "abonnement" ? (
+            <MonAbonnement notify={notify} />
+          ) : (
+            <div>
+              <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <h1 className="text-xl font-semibold text-slate-800">Gestion des accès</h1>
+                  <p className="mt-0.5 text-sm text-slate-400">Créez les accès qui ouvriront le logiciel. Chaque accès a son propre code.</p>
+                </div>
+                <button onClick={openNew} disabled={restants <= 0} className="inline-flex items-center gap-2 rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40"><Plus size={16} /> Créer un accès</button>
+              </div>
+
+              <div className="mb-5 flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm">
+                <KeyRound size={16} className="text-teal-600" />
+                <span className="font-medium text-slate-700">{used} / {nbMax} accès utilisés</span>
+                <span className="text-slate-300">·</span>
+                <span className={restants > 0 ? "text-emerald-700" : "text-rose-600"}>{restants} accès restant(s) à créer</span>
+                <span className="ml-auto text-xs text-slate-400">Nombre d'accès défini par votre abonnement</span>
+              </div>
+
+              {loading ? null : list.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-slate-300 py-12 text-center">
+                  <KeyRound size={28} className="mx-auto mb-2 text-slate-300" />
+                  <p className="text-sm text-slate-500">Aucun accès pour l'instant. Créez votre premier accès pour commencer.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  {list.map((a) => (
+                    <div key={a.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="grid h-9 w-9 place-items-center rounded-lg bg-slate-100 text-slate-500"><KeyRound size={16} /></div>
+                          <div>
+                            <div className="font-medium text-slate-800">{a.label}</div>
+                            <div className="plex-mono text-xs text-slate-400">Code : {a.code}</div>
+                          </div>
+                        </div>
+                        <button onClick={() => remove(a)} title="Supprimer" className="rounded-md p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><X size={16} /></button>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-1.5 border-t border-slate-100 pt-3">
+                        {a.sections.length === SECTIONS.length
+                          ? <span className="rounded-full bg-teal-50 px-2.5 py-1 text-xs font-medium text-teal-800 ring-1 ring-inset ring-teal-600/20">Accès complet</span>
+                          : SECTIONS.filter((s) => a.sections.includes(s.id)).map((s) => <span key={s.id} className="rounded-full bg-slate-50 px-2 py-0.5 text-[11px] text-slate-500">{s.label}</span>)}
+                      </div>
+                      <button onClick={() => askCode(a)} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-teal-700 px-3 py-2 text-sm font-medium text-white hover:bg-teal-800"><ArrowRight size={15} /> Ouvrir le logiciel</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* modal création d'accès */}
+      <Modal open={open} onClose={() => setOpen(false)} title="Créer un accès">
+        <div className="space-y-4">
+          <p className="rounded-lg bg-teal-50 px-3 py-2 text-xs text-teal-800">C'est l'accès que vous êtes en train de créer. Un code à 6 chiffres sera généré pour ouvrir le logiciel.</p>
+          <Field label="Nom de l'accès"><input autoFocus value={af.label} onChange={(e) => setAf((s) => ({ ...s, label: e.target.value }))} className={inputCls} placeholder="Ex : Accueil, Logistique, Direction…" /></Field>
+          <div>
+            <span className="mb-2 block text-sm font-medium text-slate-700">Droits d'accès</span>
+            <div className="grid grid-cols-2 gap-2">
+              {[["full", "Accès complet"], ["custom", "Accès personnalisé"]].map(([v, l]) => (
+                <button key={v} onClick={() => setAf((s) => ({ ...s, mode: v }))} className={`rounded-lg border px-3 py-2.5 text-sm font-medium ${af.mode === v ? "border-teal-600 bg-teal-50 text-teal-800" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>{l}</button>
+              ))}
+            </div>
+          </div>
+          {af.mode === "custom" && (
+            <div className="grid grid-cols-2 gap-1 rounded-lg bg-slate-50 p-3">
+              {SECTIONS.map((s) => {
+                const on = af.sections.includes(s.id);
+                return (
+                  <button key={s.id} onClick={() => setAf((st) => ({ ...st, sections: on ? st.sections.filter((x) => x !== s.id) : [...st.sections, s.id] }))} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-700 hover:bg-white">
+                    <span className={`grid h-4 w-4 place-items-center rounded border ${on ? "border-teal-600 bg-teal-600 text-white" : "border-slate-300"}`}>{on && <Check size={12} />}</span>
+                    {s.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button onClick={() => setOpen(false)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Annuler</button>
+          <button disabled={!af.label.trim() || (af.mode === "custom" && af.sections.length === 0)} onClick={saveNew} className="rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40">Créer l'accès</button>
+        </div>
+      </Modal>
+
+      {/* modal entrée dans le logiciel (code) */}
+      <Modal open={!!enterFor} onClose={() => setEnterFor(null)} title={enterFor ? `Ouvrir le logiciel — ${enterFor.label}` : ""}>
+        <div className="space-y-3">
+          <p className="text-sm text-slate-500">Saisissez le code de cet accès pour ouvrir le logiciel.</p>
+          <Field label="Code d'accès">
+            <input autoFocus value={codeInput} onChange={(e) => { setCodeInput(e.target.value); setCodeErr(""); }} onKeyDown={(e) => e.key === "Enter" && confirmCode()} className={`${inputCls} plex-mono tracking-widest`} placeholder="123456" />
+          </Field>
+          {codeErr && <p className="text-sm text-rose-600">{codeErr}</p>}
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button onClick={() => setEnterFor(null)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Annuler</button>
+          <button disabled={!codeInput.trim()} onClick={confirmCode} className="rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40">Ouvrir</button>
+        </div>
+      </Modal>
+
+      {toast && <div className="fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-full bg-slate-900 px-4 py-2 text-sm text-white shadow-lg">{toast}</div>}
+    </div>
+  );
+}
+
 export default function App() {
   const [store, setStore] = useState({
     warehouses: seedWarehouses, patients: seedPatients, partenaires: seedPartenaires, products: seedProducts,
@@ -2966,13 +3125,7 @@ export default function App() {
     } else if (prof.membre.role === "admin") {
       content = <AdminApp store={store} setStore={setStore} onPreview={startPreview} onLogout={logout} />;
     } else {
-      const access = {
-        sections: prof.membre.sections || [],
-        establishmentId: prof.membre.etablissement_id,
-        establishmentName: prof.establishmentName,
-        accessLabel: prof.membre.label || "Accès",
-      };
-      content = <MainApp store={store} setStore={setStore} access={access} mode="session" onExit={logout} />;
+      content = <ClientSpace store={store} setStore={setStore} profile={prof} onLogout={logout} />;
     }
   }
 
