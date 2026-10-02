@@ -407,9 +407,9 @@ export async function setTransfertArchived(id, archived) {
  *  Chacun a un nom, un code (pour ouvrir le logiciel) et des droits.
  * ------------------------------------------------------------------ */
 function accesFromDb(r) {
-  let sections = [];
-  try { sections = r.droits ? JSON.parse(r.droits) : []; } catch (e) { sections = []; }
-  if (!sections || !sections.length) sections = ALL_SECTIONS;
+  // "droits" est un tableau Postgres (text[]) -> déjà un tableau JS côté client.
+  let sections = Array.isArray(r.droits) ? r.droits : [];
+  if (!sections.length) sections = ALL_SECTIONS;
   return { id: r.id, label: r.nom || "Accès", code: r.code || "", sections };
 }
 
@@ -428,7 +428,7 @@ export async function createAcces(label, sections) {
   const ident = slug + "-" + Math.random().toString(36).slice(2, 5);
   const row = {
     etablissement_id: etbId, nom: label, code, identifiant: ident,
-    droits: JSON.stringify(sections && sections.length ? sections : ALL_SECTIONS), archived: false,
+    droits: (sections && sections.length ? sections : ALL_SECTIONS), archived: false,
   };
   const { data, error } = await supabase.from("acces").insert(row).select().single();
   if (error) throw error;
