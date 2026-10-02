@@ -2341,89 +2341,28 @@ function Transport({ notify, archived }) {
 /* ================================================================== *
  *  ADMIN APP
  * ================================================================== */
-function AdminApp({ store, setStore, onPreview, onLogout }) {
-  const [selectedEtb, setSelectedEtb] = useState(null);
+function AdminApp({ onLogout }) {
+  const [etbs, setEtbs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [sel, setSel] = useState(null);
+  const [acces, setAcces] = useState([]);
   const [toast, setToast] = useState(null);
-  const notify = (m) => { setToast(m); setTimeout(() => setToast(null), 2400); };
+  const notify = (m) => { setToast(m); setTimeout(() => setToast(null), 2600); };
 
-  const genCode = (name, fb) =>
-    (name.split(/\s+/).map((w) => w[0]).filter(Boolean).join("").slice(0, 3).toUpperCase() || fb) +
-    "-" + Math.floor(1000 + Math.random() * 8999);
-
-  /* ----- establishment modal ----- */
-  const [etbOpen, setEtbOpen] = useState(false);
-  const [etbEditing, setEtbEditing] = useState(null);
-  const [etbForm, setEtbForm] = useState({ name: "", identifiant: "" });
-  const openEtbNew = () => { setEtbEditing(null); setEtbForm({ name: "", identifiant: "" }); setEtbOpen(true); };
-  const openEtbEdit = (e) => { setEtbEditing(e); setEtbForm({ name: e.name, identifiant: e.identifiant }); setEtbOpen(true); };
-  const saveEtb = () => {
-    const ident = etbForm.identifiant.trim().toLowerCase();
-    if (etbEditing) {
-      setStore((s) => ({ ...s, establishments: s.establishments.map((e) => e.id === etbEditing.id ? { ...e, name: etbForm.name, identifiant: ident } : e) }));
-      notify("Établissement modifié.");
-    } else {
-      const code = genCode(etbForm.name, "ETB");
-      setStore((s) => ({ ...s, establishments: [{ id: newId("ETB"), name: etbForm.name, identifiant: ident, code, archived: false, subscription: { ...DEFAULT_SUB } }, ...s.establishments] }));
-      notify(`Établissement créé — identifiant « ${ident} », code ${code}.`);
-    }
-    setEtbOpen(false);
+  const reload = async () => {
+    setLoading(true);
+    try { setEtbs(await db.listEtablissementsAdmin()); }
+    catch (e) { notify("Erreur de connexion à la base : " + e.message); }
+    setLoading(false);
   };
-  const archiveEtb = (id) => {
-    setStore((s) => ({
-      ...s,
-      establishments: s.establishments.map((e) => e.id === id ? { ...e, archived: true } : e),
-      accesses: s.accesses.map((a) => a.establishmentId === id ? { ...a, archived: true } : a),
-    }));
-    setSelectedEtb(null);
-    notify("Établissement archivé (avec ses accès).");
+  useEffect(() => { reload(); }, []);
+
+  const openEtb = async (e) => {
+    setSel(e);
+    try { setAcces(await db.listAccesForEtb(e.id)); } catch (err) { setAcces([]); }
   };
 
-  /* ----- subscription modal ----- */
-  const [subOpen, setSubOpen] = useState(false);
-  const [subForm, setSubForm] = useState(DEFAULT_SUB);
-  const openSub = (e) => { setSubForm({ ...DEFAULT_SUB, ...(e.subscription || {}) }); setSubOpen(true); };
-  const saveSub = () => {
-    setStore((s) => ({ ...s, establishments: s.establishments.map((e) => e.id === selectedEtb.id ? { ...e, subscription: { ...subForm } } : e) }));
-    notify("Abonnement mis à jour.");
-    setSubOpen(false);
-  };
-
-  /* ----- access modal ----- */
-  const blankAcc = { label: "", identifiant: "", mode: "full", sections: SECTIONS.map((s) => s.id), singleDevice: true };
-  const [accOpen, setAccOpen] = useState(false);
-  const [accEditing, setAccEditing] = useState(null);
-  const [af, setAf] = useState(blankAcc);
-  const openAccNew = () => { setAccEditing(null); setAf(blankAcc); setAccOpen(true); };
-  const openAccEdit = (a) => { setAccEditing(a); setAf({ label: a.label, identifiant: a.identifiant, mode: a.sections.length === SECTIONS.length ? "full" : "custom", sections: a.sections, singleDevice: a.singleDevice }); setAccOpen(true); };
-  const saveAcc = () => {
-    const sections = af.mode === "full" ? SECTIONS.map((s) => s.id) : af.sections;
-    const ident = af.identifiant.trim().toLowerCase();
-    if (accEditing) {
-      setStore((s) => ({ ...s, accesses: s.accesses.map((a) => a.id === accEditing.id ? { ...a, label: af.label, identifiant: ident, sections, singleDevice: af.singleDevice } : a) }));
-      notify("Accès modifié.");
-    } else {
-      const code = genCode(af.label, "ACC");
-      setStore((s) => ({ ...s, accesses: [{ id: newId("ACC"), establishmentId: selectedEtb.id, label: af.label, identifiant: ident, code, sections, singleDevice: af.singleDevice, activeDevice: null, archived: false }, ...s.accesses] }));
-      notify(`Accès créé — identifiant « ${ident} », code ${code}.`);
-    }
-    setAccOpen(false);
-  };
-  const archiveAcc = (id) => { setStore((s) => ({ ...s, accesses: s.accesses.map((a) => a.id === id ? { ...a, archived: true } : a) })); notify("Accès archivé."); };
-  const releaseDevice = (id) => { setStore((s) => ({ ...s, accesses: s.accesses.map((a) => a.id === id ? { ...a, activeDevice: null } : a) })); notify("Appareil libéré — l'accès peut se reconnecter ailleurs."); };
-  const restoreEtb = (id) => {
-    setStore((s) => ({
-      ...s,
-      establishments: s.establishments.map((e) => e.id === id ? { ...e, archived: false } : e),
-      accesses: s.accesses.map((a) => a.establishmentId === id ? { ...a, archived: false } : a),
-    }));
-    notify("Établissement désarchivé (avec ses accès).");
-  };
-  const restoreAcc = (id) => { setStore((s) => ({ ...s, accesses: s.accesses.map((a) => a.id === id ? { ...a, archived: false } : a) })); notify("Accès désarchivé."); };
-
-  const etbs = store.establishments.filter((e) => !e.archived);
-  const accessesOf = (eid) => store.accesses.filter((a) => a.establishmentId === eid && !a.archived);
-  const archivedAccessesOf = (eid) => store.accesses.filter((a) => a.establishmentId === eid && a.archived);
-  const etb = selectedEtb ? store.establishments.find((e) => e.id === selectedEtb.id) : null;
+  const active = etbs.filter((e) => !e.archived);
 
   return (
     <div className="min-h-full w-full bg-slate-100">
@@ -2431,317 +2370,116 @@ function AdminApp({ store, setStore, onPreview, onLogout }) {
         <div className="mx-auto flex max-w-5xl items-center gap-3 px-6 py-4">
           <div className="grid h-9 w-9 place-items-center rounded-lg bg-white/10"><Shield size={18} /></div>
           <div>
-            <div className="text-sm font-semibold">Administration</div>
-            <div className="text-[11px] text-slate-400">Établissements & accès</div>
+            <div className="text-sm font-semibold">Administration MedPark</div>
+            <div className="text-[11px] text-slate-400">Entreprises inscrites &amp; abonnements</div>
           </div>
           {onLogout && (
-            <button onClick={onLogout} className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-white/15 px-3 py-1.5 text-sm font-medium text-slate-200 hover:bg-white/10">
-              <LogOut size={15} /> Se déconnecter
-            </button>
+            <button onClick={onLogout} className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-white/15 px-3 py-1.5 text-sm font-medium text-slate-200 hover:bg-white/10"><LogOut size={15} /> Se déconnecter</button>
           )}
         </div>
       </div>
 
       <div className="mx-auto max-w-5xl px-6 py-8">
-        {!etb ? (
-          /* ---------- list of establishments ---------- */
+        {!sel ? (
           <>
-            <div className="mb-5 flex items-center justify-between">
-              <div>
-                <h1 className="text-xl font-semibold text-slate-800">Établissements</h1>
-                <p className="mt-0.5 text-sm text-slate-400">{etbs.length} établissement(s). Ouvrez-en un pour gérer ses accès.</p>
-              </div>
-              <button onClick={openEtbNew} className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"><Plus size={16} /> Créer un établissement</button>
+            <div className="mb-5">
+              <h1 className="text-xl font-semibold text-slate-800">Entreprises</h1>
+              <p className="mt-0.5 text-sm text-slate-400">{loading ? "Chargement…" : `${active.length} entreprise(s) inscrite(s)`}</p>
             </div>
-
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              {etbs.map((e) => {
-                const accs = accessesOf(e.id);
-                return (
-                  <button key={e.id} onClick={() => setSelectedEtb(e)} className="group rounded-xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:border-slate-300 hover:shadow-md">
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="grid h-10 w-10 place-items-center rounded-lg bg-slate-100 text-slate-500"><Building2 size={18} /></div>
-                        <div>
-                          <div className="font-semibold text-slate-800">{e.name}</div>
-                          <div className="plex-mono text-xs text-slate-400">{e.identifiant} · {e.code}</div>
+            {loading ? null : active.length === 0 ? (
+              <Empty icon={Building2} msg="Aucune entreprise inscrite pour l'instant." />
+            ) : (
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                {active.map((e) => {
+                  const st = SUB_STATUS[e.statut] || SUB_STATUS.actif;
+                  return (
+                    <button key={e.id} onClick={() => openEtb(e)} className="group rounded-xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:border-slate-300 hover:shadow-md">
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="grid h-10 w-10 place-items-center rounded-lg bg-slate-100 text-slate-500"><Building2 size={18} /></div>
+                          <div>
+                            <div className="font-semibold text-slate-800">{e.nom}</div>
+                            <div className="plex-mono text-xs text-slate-400">{e.code}</div>
+                          </div>
                         </div>
+                        <ChevronRight size={18} className="text-slate-300 group-hover:text-slate-500" />
                       </div>
-                      <ChevronRight size={18} className="text-slate-300 group-hover:text-slate-500" />
-                    </div>
-                    <div className="mt-4 flex items-center gap-2 text-sm text-slate-500">
-                      <KeyRound size={14} className="text-slate-400" />
-                      {accs.length} accès {accs.length > 0 && <span className="text-slate-300">·</span>}
-                      <span className="truncate text-slate-400">{accs.map((a) => a.label).join(", ")}</span>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-
-            {store.establishments.some((e) => e.archived) && (
-              <div className="mt-8">
-                <div className="mb-2 text-sm font-medium text-slate-500">Établissements archivés</div>
-                <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-                  {store.establishments.filter((e) => e.archived).map((e) => (
-                    <div key={e.id} className="flex items-center justify-between gap-3 border-b border-slate-50 px-4 py-2.5 text-sm last:border-0">
-                      <span className="text-slate-500">{e.name}</span>
-                      <div className="flex items-center gap-3">
-                        <span className="plex-mono text-xs text-slate-300">{e.code}</span>
-                        <button onClick={() => restoreEtb(e.id)} className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"><RotateCcw size={13} /> Désarchiver</button>
+                      <div className="mt-4 flex flex-wrap items-center gap-2 text-sm">
+                        <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${st.cls}`}>{st.label}</span>
+                        <span className="text-slate-500">{e.nbAcces} accès</span>
+                        <span className="text-slate-300">·</span>
+                        <span className="font-medium text-slate-700">{euros(mensuel(e.nbAcces))} / mois</span>
                       </div>
-                    </div>
-                  ))}
-                </div>
+                    </button>
+                  );
+                })}
               </div>
             )}
           </>
         ) : (
-          /* ---------- establishment detail: its accesses ---------- */
           <>
-            <button onClick={() => setSelectedEtb(null)} className="mb-4 inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700"><ChevronLeft size={16} /> Tous les établissements</button>
+            <button onClick={() => setSel(null)} className="mb-4 inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700"><ChevronLeft size={16} /> Toutes les entreprises</button>
 
             <div className="mb-6 flex flex-wrap items-start justify-between gap-3 rounded-xl border border-slate-200 bg-white p-5">
               <div className="flex items-center gap-3">
                 <div className="grid h-12 w-12 place-items-center rounded-lg bg-slate-900 text-white"><Building2 size={22} /></div>
                 <div>
-                  <h1 className="text-xl font-semibold text-slate-800">{etb.name}</h1>
-                  <div className="plex-mono text-xs text-slate-400">Identifiant : {etb.identifiant} · Code : {etb.code}</div>
+                  <h1 className="text-xl font-semibold text-slate-800">{sel.nom}</h1>
+                  <div className="plex-mono text-xs text-slate-400">Identifiant : {sel.identifiant} · Code : {sel.code}</div>
                 </div>
-              </div>
-              <div className="flex gap-2">
-                <button onClick={() => openEtbEdit(etb)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"><Pencil size={14} /> Renommer</button>
-                <button onClick={() => archiveEtb(etb.id)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"><Archive size={14} /> Archiver</button>
               </div>
             </div>
 
-            {/* ---------- subscription ---------- */}
             {(() => {
-              const sub = { ...DEFAULT_SUB, ...(etb.subscription || {}) };
-              const plan = planOf(sub.plan);
-              const st = SUB_STATUS[sub.status] || SUB_STATUS.actif;
+              const st = SUB_STATUS[sel.statut] || SUB_STATUS.actif;
               return (
                 <div className="mb-6">
-                  <div className="mb-2 flex items-center justify-between">
-                    <div>
-                      <h2 className="text-base font-semibold text-slate-800">Abonnement</h2>
-                      <p className="text-sm text-slate-400">L'offre souscrite par cet établissement et sa facturation.</p>
-                    </div>
-                    <button onClick={() => openSub(etb)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"><Pencil size={14} /> Gérer l'abonnement</button>
-                  </div>
+                  <h2 className="mb-2 text-base font-semibold text-slate-800">Abonnement</h2>
                   <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="flex items-center gap-3">
                         <div className="grid h-11 w-11 place-items-center rounded-lg bg-teal-50 text-teal-700"><CreditCard size={20} /></div>
                         <div>
                           <div className="flex items-center gap-2">
-                            <span className="font-semibold text-slate-800">Offre {plan.label}</span>
+                            <span className="font-semibold text-slate-800">{sel.nbAcces} accès</span>
                             <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${st.cls}`}>{st.label}</span>
                           </div>
-                          <div className="text-xs text-slate-400">{plan.desc}</div>
+                          <div className="text-xs text-slate-400">{sel.nbAcces} × {euros(PRIX_PAR_ACCES_MOIS)} par mois</div>
                         </div>
                       </div>
                       <div className="text-right">
-                        <div className="text-lg font-semibold text-slate-800">{plan.price} €<span className="text-sm font-normal text-slate-400"> / mois</span></div>
+                        <div className="text-lg font-semibold text-slate-800">{euros(mensuel(sel.nbAcces))}<span className="text-sm font-normal text-slate-400"> / mois</span></div>
                       </div>
                     </div>
-                    <div className="mt-4 grid grid-cols-1 gap-3 border-t border-slate-100 pt-4 text-sm sm:grid-cols-2">
-                      <div className="flex items-center gap-2 text-slate-500"><Calendar size={14} className="text-slate-400" /> Depuis le <span className="font-medium text-slate-700">{fmtFR(sub.since)}</span></div>
-                      <div className="flex items-center gap-2 text-slate-500">
-                        <CalendarDays size={14} className="text-slate-400" />
-                        {sub.status === "annule" ? "Pas de prochaine échéance" : <>Prochaine échéance <span className="font-medium text-slate-700">{fmtFR(sub.nextBilling)}</span></>}
-                      </div>
-                    </div>
-                    <p className="mt-3 text-[11px] text-slate-400">Le paiement en ligne (carte bancaire, factures automatiques) sera activé à l'étape de mise en vente.</p>
+                    {sel.statut === "essai" && (
+                      <div className="mt-4 border-t border-slate-100 pt-4 text-sm text-emerald-700">Essai gratuit jusqu'au <span className="font-medium">{sel.essaiFin ? fmtFR(sel.essaiFin) : "—"}</span> · 1<sup>er</sup> paiement à prévoir : <span className="font-medium text-slate-700">{euros(premierPaiement(sel.nbAcces))}</span></div>
+                    )}
                   </div>
                 </div>
               );
             })()}
 
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <h2 className="text-base font-semibold text-slate-800">Accès</h2>
-                <p className="text-sm text-slate-400">Plusieurs accès possibles par établissement, chacun avec ses propres droits.</p>
-              </div>
-              <button onClick={openAccNew} className="inline-flex items-center gap-2 rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white hover:bg-teal-800"><Plus size={16} /> Créer un accès</button>
-            </div>
-
-            <div className="space-y-3">
-              {accessesOf(etb.id).length === 0 && <Empty icon={KeyRound} msg="Aucun accès. Créez-en un pour cet établissement." />}
-              {accessesOf(etb.id).map((a) => (
-                <div key={a.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
+            <h2 className="mb-2 text-base font-semibold text-slate-800">Accès créés ({acces.length} / {sel.nbAcces})</h2>
+            {acces.length === 0 ? (
+              <Empty icon={KeyRound} msg="Aucun accès créé par cette entreprise." />
+            ) : (
+              <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+                {acces.map((a) => (
+                  <div key={a.id} className="flex items-center justify-between gap-3 border-b border-slate-50 px-4 py-3 text-sm last:border-0">
                     <div className="flex items-center gap-3">
-                      <div className="grid h-9 w-9 place-items-center rounded-lg bg-slate-100 text-slate-500"><KeyRound size={16} /></div>
-                      <div>
-                        <div className="font-medium text-slate-800">{a.label}</div>
-                        <div className="plex-mono text-xs text-slate-400">{a.identifiant} · {a.code}</div>
-                      </div>
+                      <div className="grid h-8 w-8 place-items-center rounded-lg bg-slate-100 text-slate-500"><KeyRound size={15} /></div>
+                      <span className="font-medium text-slate-700">{a.label}</span>
                     </div>
-                    <div className="flex gap-1">
-                      <button onClick={() => onPreview(a, etb)} title="Prévisualiser le logiciel avec cet accès" className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"><Eye size={14} /> Prévisualiser</button>
-                      <button onClick={() => openAccEdit(a)} className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><Pencil size={15} /></button>
-                      <button onClick={() => archiveAcc(a.id)} className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><Archive size={15} /></button>
-                    </div>
+                    <span className="plex-mono text-xs text-slate-400">Code : {a.code}</span>
                   </div>
-                  <div className="mt-3 flex flex-wrap gap-1.5 border-t border-slate-100 pt-3">
-                    {a.sections.length === SECTIONS.length ? (
-                      <span className="rounded-full bg-teal-50 px-2.5 py-1 text-xs font-medium text-teal-800 ring-1 ring-inset ring-teal-600/20">Accès complet</span>
-                    ) : SECTIONS.map((s) => (
-                      <span key={s.id} className={`rounded-full px-2.5 py-1 text-xs ${a.sections.includes(s.id) ? "bg-teal-50 text-teal-800 ring-1 ring-inset ring-teal-600/20" : "bg-slate-50 text-slate-300 line-through"}`}>{s.label}</span>
-                    ))}
-                  </div>
-                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                    {a.singleDevice ? (
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700 ring-1 ring-inset ring-violet-600/20"><Smartphone size={12} /> 1 seul appareil</span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-50 px-2.5 py-1 text-xs text-slate-400 ring-1 ring-inset ring-slate-300/40"><Smartphone size={12} /> Multi-appareils</span>
-                    )}
-                    {a.singleDevice && (a.activeDevice ? (
-                      <span className="inline-flex items-center gap-2 text-xs text-slate-500">
-                        Connecté&nbsp;: <span className="plex-mono text-slate-700">{a.activeDevice}</span>
-                        <button onClick={() => releaseDevice(a.id)} className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 font-medium text-slate-600 hover:bg-slate-50"><Unlock size={12} /> Libérer</button>
-                      </span>
-                    ) : (
-                      <span className="text-xs text-slate-400">Aucun appareil connecté</span>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {archivedAccessesOf(etb.id).length > 0 && (
-              <div className="mt-8">
-                <div className="mb-2 text-sm font-medium text-slate-500">Accès archivés</div>
-                <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-                  {archivedAccessesOf(etb.id).map((a) => (
-                    <div key={a.id} className="flex items-center justify-between gap-3 border-b border-slate-50 px-4 py-2.5 text-sm last:border-0">
-                      <span className="text-slate-500">{a.label}</span>
-                      <div className="flex items-center gap-3">
-                        <span className="plex-mono text-xs text-slate-300">{a.code}</span>
-                        <button onClick={() => restoreAcc(a.id)} className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"><RotateCcw size={13} /> Désarchiver</button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                ))}
               </div>
             )}
           </>
         )}
       </div>
 
-      {/* establishment modal */}
-      <Modal open={etbOpen} onClose={() => setEtbOpen(false)} title={etbEditing ? "Modifier l'établissement" : "Créer un établissement"}>
-        <div className="space-y-4">
-          <Field label="Nom de l'établissement">
-            <input value={etbForm.name} onChange={(e) => setEtbForm((f) => ({ ...f, name: e.target.value }))} className={inputCls} placeholder="Ex : CHU de Paris" />
-          </Field>
-          <Field label="Identifiant de connexion" hint={etbEditing ? `Code : ${etbEditing.code} (généré)` : "Choisi par vous. Le code sera généré automatiquement."}>
-            <input value={etbForm.identifiant} onChange={(e) => setEtbForm((f) => ({ ...f, identifiant: e.target.value }))} className={`${inputCls} plex-mono`} placeholder="ex : chu-paris" />
-          </Field>
-        </div>
-        <div className="mt-5 flex justify-end gap-2">
-          <button onClick={() => setEtbOpen(false)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Annuler</button>
-          <button disabled={!etbForm.name.trim() || !etbForm.identifiant.trim()} onClick={saveEtb} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white enabled:hover:bg-slate-800 disabled:opacity-40">{etbEditing ? "Enregistrer" : "Créer"}</button>
-        </div>
-      </Modal>
-
-      {/* subscription modal */}
-      <Modal open={subOpen} onClose={() => setSubOpen(false)} title="Gérer l'abonnement">
-        <div className="space-y-4">
-          <Field label="Offre">
-            <div className="space-y-2">
-              {PLANS.map((p) => (
-                <label key={p.id} className={`flex cursor-pointer items-center justify-between gap-3 rounded-lg border px-3 py-2.5 ${subForm.plan === p.id ? "border-teal-500 bg-teal-50/50 ring-1 ring-teal-500" : "border-slate-200 hover:bg-slate-50"}`}>
-                  <div className="flex items-center gap-3">
-                    <input type="radio" name="plan" checked={subForm.plan === p.id} onChange={() => setSubForm((f) => ({ ...f, plan: p.id }))} className="accent-teal-600" />
-                    <div>
-                      <div className="text-sm font-medium text-slate-800">{p.label}</div>
-                      <div className="text-xs text-slate-400">{p.desc}</div>
-                    </div>
-                  </div>
-                  <div className="text-sm font-semibold text-slate-700">{p.price} €<span className="font-normal text-slate-400"> / mois</span></div>
-                </label>
-              ))}
-            </div>
-          </Field>
-          <Field label="Statut">
-            <select value={subForm.status} onChange={(e) => setSubForm((f) => ({ ...f, status: e.target.value }))} className={inputCls}>
-              {Object.entries(SUB_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-            </select>
-          </Field>
-          <Field label="Prochaine échéance de facturation">
-            <input type="date" value={subForm.nextBilling} onChange={(e) => setSubForm((f) => ({ ...f, nextBilling: e.target.value }))} className={inputCls} />
-          </Field>
-        </div>
-        <div className="mt-5 flex justify-end gap-2">
-          <button onClick={() => setSubOpen(false)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Annuler</button>
-          <button onClick={saveSub} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800">Enregistrer</button>
-        </div>
-      </Modal>
-
-      {/* access modal */}
-      <Modal open={accOpen} onClose={() => setAccOpen(false)} title={accEditing ? "Modifier l'accès" : "Créer un accès"}>
-        <div className="space-y-4">
-          <Field label="Nom de l'accès">
-            <input value={af.label} onChange={(e) => setAf((s) => ({ ...s, label: e.target.value }))} className={inputCls} placeholder="Ex : Service logistique" />
-          </Field>
-          <Field label="Identifiant de connexion" hint={accEditing ? `Code : ${accEditing.code} (généré)` : "Choisi par vous. Le code sera généré automatiquement."}>
-            <input value={af.identifiant} onChange={(e) => setAf((s) => ({ ...s, identifiant: e.target.value }))} className={`${inputCls} plex-mono`} placeholder="ex : logistique" />
-          </Field>
-          <div>
-            <span className="mb-2 block text-sm font-medium text-slate-700">Droits d'accès</span>
-            <div className="grid grid-cols-2 gap-2">
-              {[["full", "Accès complet"], ["custom", "Accès personnalisé"]].map(([v, l]) => (
-                <button key={v} onClick={() => setAf((s) => ({ ...s, mode: v }))} className={`rounded-lg border px-3 py-2.5 text-sm font-medium ${af.mode === v ? "border-teal-600 bg-teal-50 text-teal-800" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>{l}</button>
-              ))}
-            </div>
-          </div>
-          {af.mode === "custom" && (
-            <div className="space-y-1 rounded-lg bg-slate-50 p-3">
-              {SECTIONS.map((s) => {
-                const on = af.sections.includes(s.id);
-                return (
-                  <button key={s.id} onClick={() => setAf((st) => ({ ...st, sections: on ? st.sections.filter((x) => x !== s.id) : [...st.sections, s.id] }))} className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-sm text-slate-700 hover:bg-white">
-                    <span className={`grid h-4 w-4 place-items-center rounded border ${on ? "border-teal-600 bg-teal-600 text-white" : "border-slate-300"}`}>{on && <Check size={12} />}</span>
-                    {s.label}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-          <button
-            onClick={() => setAf((s) => ({ ...s, singleDevice: !s.singleDevice }))}
-            className="flex w-full items-start justify-between gap-3 rounded-lg border border-slate-200 px-3 py-3 text-left hover:bg-slate-50">
-            <span className="flex items-start gap-2.5">
-              <Smartphone size={16} className="mt-0.5 text-slate-400" />
-              <span>
-                <span className="block text-sm font-medium text-slate-700">Limiter à un seul appareil</span>
-                <span className="block text-xs text-slate-400">Le code ne pourra pas être connecté sur deux postes en même temps.</span>
-              </span>
-            </span>
-            <span className={`mt-0.5 flex h-5 w-9 shrink-0 items-center rounded-full px-0.5 transition ${af.singleDevice ? "justify-end bg-teal-600" : "justify-start bg-slate-300"}`}>
-              <span className="h-4 w-4 rounded-full bg-white" />
-            </span>
-          </button>
-        </div>
-        <div className="mt-5 flex justify-end gap-2">
-          <button onClick={() => setAccOpen(false)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Annuler</button>
-          <button disabled={!af.label.trim() || !af.identifiant.trim() || (af.mode === "custom" && af.sections.length === 0)} onClick={saveAcc} className="rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40">{accEditing ? "Enregistrer" : "Créer l'accès"}</button>
-        </div>
-      </Modal>
-
       {toast && <div className="fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-full bg-slate-900 px-4 py-2 text-sm text-white shadow-lg">{toast}</div>}
-    </div>
-  );
-}
-
-/* ---------- shared empty state ---------- */
-function Empty({ icon: Icon, msg }) {
-  return (
-    <div className="grid place-items-center rounded-xl border border-dashed border-slate-200 py-16 text-center">
-      <Icon size={28} className="mb-2 text-slate-300" />
-      <p className="text-sm text-slate-400">{msg}</p>
     </div>
   );
 }
@@ -3123,7 +2861,7 @@ export default function App() {
     } else if (!prof || !prof.membre) {
       content = <NoAccess email={prof && prof.user ? prof.user.email : ""} onLogout={logout} />;
     } else if (prof.membre.role === "admin") {
-      content = <AdminApp store={store} setStore={setStore} onPreview={startPreview} onLogout={logout} />;
+      content = <AdminApp onLogout={logout} />;
     } else {
       content = <ClientSpace store={store} setStore={setStore} profile={prof} onLogout={logout} />;
     }
