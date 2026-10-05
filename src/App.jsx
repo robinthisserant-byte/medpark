@@ -2826,6 +2826,15 @@ function AccesGate({ establishmentName, onEnter, onLogout }) {
   );
 }
 
+function Empty({ icon: Icon, msg }) {
+  return (
+    <div className="rounded-xl border border-dashed border-slate-200 py-12 text-center">
+      {Icon && <Icon size={28} className="mx-auto mb-2 text-slate-300" />}
+      <p className="text-sm text-slate-400">{msg}</p>
+    </div>
+  );
+}
+
 class ErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { error: null }; }
   static getDerivedStateFromError(error) { return { error }; }
