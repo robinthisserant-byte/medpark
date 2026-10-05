@@ -2826,6 +2826,26 @@ function AccesGate({ establishmentName, onEnter, onLogout }) {
   );
 }
 
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch() {}
+  render() {
+    if (this.state.error) {
+      const msg = (this.state.error && this.state.error.message) || String(this.state.error);
+      return (
+        <div style={{ padding: 24, fontFamily: "system-ui, sans-serif", maxWidth: 640, margin: "40px auto" }}>
+          <h2 style={{ color: "#b91c1c", marginBottom: 8 }}>Une erreur est survenue</h2>
+          <p style={{ color: "#64748b", fontSize: 14, marginBottom: 12 }}>Recopiez ce message pour le diagnostic :</p>
+          <pre style={{ whiteSpace: "pre-wrap", background: "#f1f5f9", padding: 12, borderRadius: 8, fontSize: 12, color: "#0f172a" }}>{msg}</pre>
+          <button onClick={() => window.location.reload()} style={{ marginTop: 12, padding: "8px 16px", borderRadius: 8, border: "1px solid #cbd5e1", background: "#fff", cursor: "pointer" }}>Recharger</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function ResetPassword({ onDone }) {
   const [pw, setPw] = useState("");
   const [pw2, setPw2] = useState("");
@@ -2944,7 +2964,7 @@ export default function App() {
 
   return (
     <div className="pm-root flex h-screen w-full flex-col bg-slate-50 text-slate-800">
-      <div className="min-h-0 flex-1">{content}</div>
+      <div className="min-h-0 flex-1"><ErrorBoundary>{content}</ErrorBoundary></div>
     </div>
   );
 }
