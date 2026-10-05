@@ -34,8 +34,20 @@ export async function getSession() {
 
 // S'abonne aux changements de connexion (connexion / déconnexion). Renvoie une fonction pour se désabonner.
 export function onAuthChange(cb) {
-  const { data } = supabase.auth.onAuthStateChange((_event, session) => cb(session));
+  const { data } = supabase.auth.onAuthStateChange((event, session) => cb(event, session));
   return () => { try { data.subscription.unsubscribe(); } catch (e) {} };
+}
+
+// Envoie un email de réinitialisation de mot de passe.
+export async function sendPasswordReset(email) {
+  const { error } = await supabase.auth.resetPasswordForEmail(email);
+  if (error) throw error;
+}
+
+// Définit un nouveau mot de passe (après avoir cliqué le lien de réinitialisation).
+export async function updatePassword(newPassword) {
+  const { error } = await supabase.auth.updateUser({ password: newPassword });
+  if (error) throw error;
 }
 
 // Récupère le profil de l'utilisateur connecté : son rôle (admin/client),
