@@ -2488,15 +2488,24 @@ function AdminApp({ onLogout }) {
  *  LOGIN — two-step: establishment code, then personal access code
  * ================================================================== */
 function LoginScreen({ onAuthed }) {
-  const [mode, setMode] = useState("login");   // "login" | "signup"
+  const [mode, setMode] = useState("login");   // "login" | "signup" | "forgot"
   const [company, setCompany] = useState("");
   const [nbAcces, setNbAcces] = useState(1);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [forgotSent, setForgotSent] = useState(false);
 
   const submit = async () => {
+    if (mode === "forgot") {
+      if (!email.trim()) return;
+      setBusy(true); setError("");
+      try { await db.sendPasswordReset(email.trim()); setForgotSent(true); }
+      catch (e) { setError("Impossible d'envoyer l'email de réinitialisation."); }
+      setBusy(false);
+      return;
+    }
     setError("");
     if (mode === "login") {
       if (!email.trim() || !password) return;
@@ -2530,13 +2539,15 @@ function LoginScreen({ onAuthed }) {
         <div className="mb-6 flex flex-col items-center text-center">
           <div className="mb-3 grid h-12 w-12 place-items-center rounded-xl bg-teal-700 text-white"><Package size={24} /></div>
           <div className="text-lg font-semibold text-slate-800">MedPark</div>
-          <div className="text-sm text-slate-400">{mode === "login" ? "Connexion à votre espace" : "Créer le compte de votre entreprise"}</div>
+          <div className="text-sm text-slate-400">{mode === "login" ? "Connexion à votre espace" : mode === "signup" ? "Créer le compte de votre entreprise" : "Réinitialiser votre mot de passe"}</div>
         </div>
 
-        <div className="mb-4 flex rounded-lg bg-slate-100 p-0.5 text-sm font-medium">
-          <button onClick={() => { setMode("login"); setError(""); }} className={`flex-1 rounded-md px-3 py-1.5 ${mode === "login" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}>Se connecter</button>
-          <button onClick={() => { setMode("signup"); setError(""); }} className={`flex-1 rounded-md px-3 py-1.5 ${mode === "signup" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}>Créer un compte</button>
-        </div>
+        {mode !== "forgot" && (
+          <div className="mb-4 flex rounded-lg bg-slate-100 p-0.5 text-sm font-medium">
+            <button onClick={() => { setMode("login"); setError(""); }} className={`flex-1 rounded-md px-3 py-1.5 ${mode === "login" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}>Se connecter</button>
+            <button onClick={() => { setMode("signup"); setError(""); }} className={`flex-1 rounded-md px-3 py-1.5 ${mode === "signup" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}>Créer un compte</button>
+          </div>
+        )}
 
         <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           {mode === "signup" && (
@@ -2547,9 +2558,11 @@ function LoginScreen({ onAuthed }) {
           <Field label="Email">
             <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} placeholder="vous@exemple.fr" />
           </Field>
-          <Field label="Mot de passe" hint={mode === "signup" ? "6 caractères minimum." : undefined}>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} className={inputCls} placeholder="••••••••" />
-          </Field>
+          {mode !== "forgot" && (
+            <Field label="Mot de passe" hint={mode === "signup" ? "6 caractères minimum." : undefined}>
+              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} className={inputCls} placeholder="••••••••" />
+            </Field>
+          )}
 
           {mode === "signup" && (
             <div className="rounded-xl bg-slate-50 p-4">
@@ -2568,13 +2581,23 @@ function LoginScreen({ onAuthed }) {
             </div>
           )}
 
+          {mode === "forgot" && forgotSent && (
+            <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">Si un compte existe pour cet email, un lien de réinitialisation vient d'être envoyé. Vérifiez votre boîte mail (et vos spams).</p>
+          )}
           {error && <p className="text-sm text-rose-600">{error}</p>}
-          <button onClick={submit} disabled={busy} className="w-full rounded-lg bg-teal-700 px-4 py-2.5 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40">
-            {busy ? "Veuillez patienter…" : mode === "login" ? "Se connecter" : `Démarrer l'essai gratuit`}
-          </button>
+          {!(mode === "forgot" && forgotSent) && (
+            <button onClick={submit} disabled={busy} className="w-full rounded-lg bg-teal-700 px-4 py-2.5 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40">
+              {busy ? "Veuillez patienter…" : mode === "login" ? "Se connecter" : mode === "signup" ? "Démarrer l'essai gratuit" : "Envoyer le lien"}
+            </button>
+          )}
+          {mode === "login" && (
+            <button onClick={() => { setMode("forgot"); setError(""); setForgotSent(false); }} className="w-full text-center text-xs text-slate-400 hover:text-slate-600">Mot de passe oublié ?</button>
+          )}
         </div>
         <p className="mt-4 text-center text-[11px] leading-relaxed text-slate-400">
-          {mode === "login" ? "Pas encore de compte ? Cliquez sur « Créer un compte »." : `Aucun paiement maintenant — essai gratuit de ${MOIS_ESSAI} mois.`}
+          {mode === "login" ? "Pas encore de compte ? Cliquez sur « Créer un compte »."
+            : mode === "signup" ? `Aucun paiement maintenant — essai gratuit de ${MOIS_ESSAI} mois.`
+            : <button onClick={() => { setMode("login"); setError(""); setForgotSent(false); }} className="text-slate-500 underline hover:text-slate-700">← Retour à la connexion</button>}
         </p>
       </div>
     </div>
@@ -2803,6 +2826,52 @@ function AccesGate({ establishmentName, onEnter, onLogout }) {
   );
 }
 
+function ResetPassword({ onDone }) {
+  const [pw, setPw] = useState("");
+  const [pw2, setPw2] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [ok, setOk] = useState(false);
+
+  const submit = async () => {
+    if (pw.length < 6) { setErr("6 caractères minimum."); return; }
+    if (pw !== pw2) { setErr("Les deux mots de passe ne correspondent pas."); return; }
+    setBusy(true); setErr("");
+    try { await db.updatePassword(pw); setOk(true); }
+    catch (e) { setErr("Erreur : " + (e.message || "")); setBusy(false); }
+  };
+
+  return (
+    <div className="flex min-h-full w-full items-center justify-center bg-slate-100 px-4 py-12">
+      <div className="w-full max-w-sm">
+        <div className="mb-6 flex flex-col items-center text-center">
+          <div className="mb-3 grid h-12 w-12 place-items-center rounded-xl bg-teal-700 text-white"><Package size={24} /></div>
+          <div className="text-lg font-semibold text-slate-800">Nouveau mot de passe</div>
+        </div>
+        <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          {ok ? (
+            <>
+              <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">Mot de passe mis à jour. Vous pouvez continuer.</p>
+              <button onClick={onDone} className="w-full rounded-lg bg-teal-700 px-4 py-2.5 text-sm font-medium text-white hover:bg-teal-800">Continuer</button>
+            </>
+          ) : (
+            <>
+              <Field label="Nouveau mot de passe" hint="6 caractères minimum.">
+                <input autoFocus type="password" value={pw} onChange={(e) => setPw(e.target.value)} className={inputCls} placeholder="••••••••" />
+              </Field>
+              <Field label="Confirmer le mot de passe">
+                <input type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} className={inputCls} placeholder="••••••••" />
+              </Field>
+              {err && <p className="text-sm text-rose-600">{err}</p>}
+              <button onClick={submit} disabled={busy} className="w-full rounded-lg bg-teal-700 px-4 py-2.5 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40">{busy ? "Veuillez patienter…" : "Enregistrer le mot de passe"}</button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [store, setStore] = useState({
     warehouses: seedWarehouses, patients: seedPatients, partenaires: seedPartenaires, products: seedProducts,
@@ -2811,6 +2880,7 @@ export default function App() {
   });
   const [preview, setPreview] = useState(null);
   const [auth, setAuth] = useState({ status: "loading", profile: null });
+  const [recovery, setRecovery] = useState(false);
 
   useEffect(() => {
     const link = document.createElement("link");
@@ -2839,7 +2909,10 @@ export default function App() {
   };
   useEffect(() => {
     loadProfile();
-    const unsub = db.onAuthChange(() => loadProfile());
+    const unsub = db.onAuthChange((event) => {
+      if (event === "PASSWORD_RECOVERY") { setRecovery(true); return; }
+      loadProfile();
+    });
     return unsub;
   }, []);
 
@@ -2850,7 +2923,9 @@ export default function App() {
   const exitPreview = () => setPreview(null);
 
   let content;
-  if (auth.status === "loading") {
+  if (recovery) {
+    content = <ResetPassword onDone={() => { setRecovery(false); loadProfile(); }} />;
+  } else if (auth.status === "loading") {
     content = <div className="flex min-h-full w-full items-center justify-center text-sm text-slate-400">Chargement…</div>;
   } else if (auth.status === "out") {
     content = <LoginScreen onAuthed={loadProfile} />;
