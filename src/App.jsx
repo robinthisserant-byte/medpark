@@ -2362,6 +2362,16 @@ function AdminApp({ onLogout }) {
     try { setAcces(await db.listAccesForEtb(e.id)); } catch (err) { setAcces([]); }
   };
 
+  const changeStatut = async (statut) => {
+    try {
+      await db.setEtbStatut(sel.id, statut);
+      const fresh = await db.listEtablissementsAdmin();
+      setEtbs(fresh);
+      setSel(fresh.find((e) => e.id === sel.id) || { ...sel, statut });
+      notify(statut === "suspendu" ? "Entreprise suspendue." : "Entreprise réactivée.");
+    } catch (e) { notify("Erreur : " + e.message); }
+  };
+
   const active = etbs.filter((e) => !e.archived);
 
   return (
@@ -2453,6 +2463,16 @@ function AdminApp({ onLogout }) {
                     </div>
                     {sel.statut === "essai" && (
                       <div className="mt-4 border-t border-slate-100 pt-4 text-sm text-emerald-700">Essai gratuit jusqu'au <span className="font-medium">{sel.essaiFin ? fmtFR(sel.essaiFin) : "—"}</span> · 1<sup>er</sup> paiement à prévoir : <span className="font-medium text-slate-700">{euros(premierPaiement(sel.nbAcces))}</span></div>
+                    )}
+                    <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-4">
+                      {sel.statut === "suspendu" ? (
+                        <button onClick={() => changeStatut("actif")} className="inline-flex items-center gap-2 rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white hover:bg-teal-800"><Check size={15} /> Réactiver le compte</button>
+                      ) : (
+                        <button onClick={() => changeStatut("suspendu")} className="inline-flex items-center gap-2 rounded-lg border border-rose-200 px-4 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50"><Shield size={15} /> Suspendre le compte</button>
+                      )}
+                    </div>
+                    {sel.statut === "suspendu" && (
+                      <p className="mt-2 text-xs text-amber-700">Compte suspendu : ses accès ne peuvent plus ouvrir le logiciel.</p>
                     )}
                   </div>
                 </div>
@@ -2656,6 +2676,7 @@ function AccesGate({ establishmentName, onEnter, onLogout }) {
   const [tab, setTab] = useState("acces");          // acces | abonnement
   const [list, setList] = useState([]);
   const [nbMax, setNbMax] = useState(1);
+  const [statut, setStatut] = useState("actif");
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
   const notify = (m) => { setToast(m); setTimeout(() => setToast(null), 2600); };
@@ -2673,7 +2694,7 @@ function AccesGate({ establishmentName, onEnter, onLogout }) {
     setLoading(true);
     try {
       const [acc, abo] = await Promise.all([db.listAcces(), db.getMyAbonnement()]);
-      setList(acc); setNbMax(abo ? abo.nbAcces : 1);
+      setList(acc); setNbMax(abo ? abo.nbAcces : 1); setStatut(abo ? abo.statut : "actif");
     } catch (e) { notify("Erreur de connexion à la base : " + e.message); }
     setLoading(false);
   };
@@ -2681,6 +2702,7 @@ function AccesGate({ establishmentName, onEnter, onLogout }) {
 
   const used = list.length;
   const restants = Math.max(0, nbMax - used);
+  const suspendu = statut === "suspendu" || statut === "annule";
 
   const openNew = () => { setAf(blank); setOpen(true); };
   const saveNew = async () => {
@@ -2696,8 +2718,9 @@ function AccesGate({ establishmentName, onEnter, onLogout }) {
     try { await db.deleteAcces(a.id); await reload(); notify("Accès supprimé."); }
     catch (e) { notify("Erreur : " + e.message); }
   };
-  const askCode = (a) => { setEnterFor(a); setCodeInput(""); setCodeErr(""); };
+  const askCode = (a) => { if (suspendu) return; setEnterFor(a); setCodeInput(""); setCodeErr(""); };
   const confirmCode = () => {
+    if (suspendu) { setCodeErr("Compte suspendu."); return; }
     if (codeInput.trim() === String(enterFor.code)) { onEnter(enterFor); }
     else setCodeErr("Code incorrect.");
   };
@@ -2731,6 +2754,12 @@ function AccesGate({ establishmentName, onEnter, onLogout }) {
                 <button onClick={openNew} disabled={restants <= 0} className="inline-flex items-center gap-2 rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40"><Plus size={16} /> Créer un accès</button>
               </div>
 
+              {suspendu && (
+                <div className="mb-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                  <span className="font-medium">Compte suspendu.</span> L'accès au logiciel est bloqué. Contactez MedPark pour réactiver votre abonnement.
+                </div>
+              )}
+
               <div className="mb-5 flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm">
                 <KeyRound size={16} className="text-teal-600" />
                 <span className="font-medium text-slate-700">{used} / {nbMax} accès utilisés</span>
@@ -2763,7 +2792,7 @@ function AccesGate({ establishmentName, onEnter, onLogout }) {
                           ? <span className="rounded-full bg-teal-50 px-2.5 py-1 text-xs font-medium text-teal-800 ring-1 ring-inset ring-teal-600/20">Accès complet</span>
                           : SECTIONS.filter((s) => a.sections.includes(s.id)).map((s) => <span key={s.id} className="rounded-full bg-slate-50 px-2 py-0.5 text-[11px] text-slate-500">{s.label}</span>)}
                       </div>
-                      <button onClick={() => askCode(a)} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-teal-700 px-3 py-2 text-sm font-medium text-white hover:bg-teal-800"><ArrowRight size={15} /> Ouvrir le logiciel</button>
+                      <button onClick={() => askCode(a)} disabled={suspendu} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-teal-700 px-3 py-2 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40"><ArrowRight size={15} /> Ouvrir le logiciel</button>
                     </div>
                   ))}
                 </div>
