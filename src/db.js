@@ -472,3 +472,9 @@ export async function listAccesForEtb(etbId) {
   if (error) throw error;
   return (data || []).map(accesFromDb);
 }
+
+// Change le statut d'abonnement d'une entreprise (admin) : "actif" | "suspendu" | ...
+export async function setEtbStatut(etbId, statut) {
+  const { error } = await supabase.from("etablissements").update({ abo_statut: statut }).eq("id", etbId);
+  if (error) throw error;
+}
