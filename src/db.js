@@ -504,3 +504,9 @@ export async function setEtbStatut(etbId, statut) {
   const { error } = await supabase.from("etablissements").update({ abo_statut: statut }).eq("id", etbId);
   if (error) throw error;
 }
+
+// Supprime définitivement une entreprise et tout son contenu (réservé à l'admin).
+export async function supprimerEtablissementAdmin(etbId) {
+  const { error } = await supabase.rpc("supprimer_etablissement_admin", { p_etb_id: etbId });
+  if (error) throw error;
+}
