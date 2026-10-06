@@ -2917,6 +2917,10 @@ function FirstAccess({ establishmentName, onCreated, onLogout }) {
       <Field label="Code du gestionnaire" hint="4 caractères minimum. C'est vous qui le choisissez.">
         <input value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} className={`${inputCls} plex-mono tracking-widest`} placeholder="Choisissez un code" />
       </Field>
+      <div className="flex items-start gap-2 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">
+        <AlertTriangle size={18} className="mt-0.5 shrink-0 text-rose-500" />
+        <span><strong>N'oubliez pas ce code</strong> : c'est lui qui gère toute votre entreprise. Notez-le précieusement et gardez-le en lieu sûr.</span>
+      </div>
       {err && <p className="text-sm text-rose-600">{err}</p>}
       <button onClick={submit} disabled={busy} className="w-full rounded-lg bg-teal-700 px-4 py-2.5 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40">{busy ? "Veuillez patienter…" : "Créer l'accès gestionnaire"}</button>
     </AuthShell>
@@ -3059,6 +3063,12 @@ function ManagerSpace({ establishmentName, onOpenApp, onSwitch, onLogout }) {
             <span className={`grid h-4 w-4 shrink-0 place-items-center rounded border ${af.gestionnaire ? "border-amber-600 bg-amber-600 text-white" : "border-slate-300"}`}>{af.gestionnaire && <Check size={12} />}</span>
             <span><span className="font-medium">Peut gérer les accès</span><br /><span className="text-xs text-slate-400">Cette personne pourra créer/supprimer des accès et voir l'abonnement.</span></span>
           </button>
+          {af.gestionnaire && (
+            <div className="flex items-start gap-2 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">
+              <AlertTriangle size={18} className="mt-0.5 shrink-0 text-rose-500" />
+              <span><strong>Ce code gère l'entreprise.</strong> Ne le communiquez qu'à une personne de confiance et notez-le précieusement.</span>
+            </div>
+          )}
           <div>
             <span className="mb-2 block text-sm font-medium text-slate-700">Droits d'accès</span>
             <div className="grid grid-cols-2 gap-2">
