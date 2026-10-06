@@ -80,18 +80,23 @@ export async function signUp(companyName, email, password, nbAcces) {
   const base = (companyName || "entreprise").toLowerCase().normalize("NFD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30) || "entreprise";
   const slug = base + "-" + Math.random().toString(36).slice(2, 6);   // suffixe pour éviter les doublons
   const code = "ETB-" + Math.floor(1000 + Math.random() * 8999);
+  // On génère nous-mêmes l'identifiant de l'établissement : ainsi on n'a PAS
+  // besoin de relire la ligne juste après l'avoir créée (cette relecture était
+  // bloquée par la sécurité RLS tant que le rattachement n'existait pas encore).
+  const etbId = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : undefined;
   // 1) créer l'établissement de l'entreprise (avec son abonnement en période d'essai)
-  const { data: etb, error: e2 } = await supabase.from("etablissements").insert({
+  const { error: e2 } = await supabase.from("etablissements").insert({
+    id: etbId,
     nom: companyName, identifiant: slug, code, archived: false,
     nb_acces: nbAcces || 1, abo_statut: "essai", essai_fin: essaiFin,
-  }).select().single();
+  });
   if (e2) throw e2;
   // 2) rattacher l'utilisateur à cet établissement (compte client, tous les droits)
   const { error: e3 } = await supabase.from("membres").insert({
-    user_id: data.user.id, role: "client", etablissement_id: etb.id, sections: ALL_SECTIONS, label: companyName,
+    user_id: data.user.id, role: "client", etablissement_id: etbId, sections: ALL_SECTIONS, label: companyName,
   });
   if (e3) throw e3;
-  _etbId = etb.id;
+  _etbId = etbId;
   return { ok: true };
 }
 
