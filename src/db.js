@@ -422,7 +422,7 @@ function accesFromDb(r) {
   // "droits" est un tableau Postgres (text[]) -> déjà un tableau JS côté client.
   let sections = Array.isArray(r.droits) ? r.droits : [];
   if (!sections.length) sections = ALL_SECTIONS;
-  return { id: r.id, label: r.nom || "Accès", code: r.code || "", sections };
+  return { id: r.id, label: r.nom || "Accès", code: r.code || "", sections, gestionnaire: !!r.gestionnaire };
 }
 
 // Liste les accès de mon entreprise.
@@ -433,14 +433,14 @@ export async function listAcces() {
 }
 
 // Crée un accès (génère un code à 6 chiffres).
-export async function createAcces(label, sections) {
+export async function createAcces(label, sections, code, gestionnaire) {
   const etbId = await getEtablissementId();
-  const code = Math.floor(100000 + Math.random() * 899999).toString();
   const slug = (label || "acces").toLowerCase().normalize("NFD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 20) || "acces";
   const ident = slug + "-" + Math.random().toString(36).slice(2, 5);
   const row = {
-    etablissement_id: etbId, nom: label, code, identifiant: ident,
+    etablissement_id: etbId, nom: label, code: String(code || "").trim(), identifiant: ident,
     droits: (sections && sections.length ? sections : ALL_SECTIONS), archived: false,
+    gestionnaire: !!gestionnaire,
   };
   const { data, error } = await supabase.from("acces").insert(row).select().single();
   if (error) throw error;
@@ -451,6 +451,32 @@ export async function createAcces(label, sections) {
 export async function deleteAcces(id) {
   const { error } = await supabase.from("acces").update({ archived: true }).eq("id", id);
   if (error) throw error;
+}
+
+/* ------------------------------------------------------------------ *
+ *  GESTION DE MON COMPTE (gestionnaire) : résilier / réactiver / supprimer.
+ *  Ces actions passent par des fonctions SQL "security definer" côté base,
+ *  pour qu'une entreprise ne puisse agir QUE sur son propre compte.
+ * ------------------------------------------------------------------ */
+
+// Résilie mon abonnement (bloque l'accès au logiciel, conserve les données).
+export async function resilierMonAbonnement() {
+  const { error } = await supabase.rpc("resilier_mon_abonnement");
+  if (error) throw error;
+}
+
+// Réactive mon abonnement précédemment résilié.
+export async function reactiverMonAbonnement() {
+  const { error } = await supabase.rpc("reactiver_mon_abonnement");
+  if (error) throw error;
+}
+
+// Supprime définitivement mon entreprise, tout son contenu et mon compte de connexion.
+export async function supprimerMonCompte() {
+  const { error } = await supabase.rpc("supprimer_mon_etablissement");
+  if (error) throw error;
+  _etbId = null;
+  try { await supabase.auth.signOut(); } catch (e) {}
 }
 
 /* ------------------------------------------------------------------ *
