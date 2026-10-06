@@ -2449,6 +2449,11 @@ function AdminApp({ onLogout }) {
   const [toast, setToast] = useState(null);
   const notify = (m) => { setToast(m); setTimeout(() => setToast(null), 2600); };
 
+  // suppression d'une entreprise (admin)
+  const [delOpen, setDelOpen] = useState(false);
+  const [delText, setDelText] = useState("");
+  const [busy, setBusy] = useState(false);
+
   const reload = async () => {
     setLoading(true);
     try { setEtbs(await db.listEtablissementsAdmin()); }
@@ -2470,6 +2475,18 @@ function AdminApp({ onLogout }) {
       setSel(fresh.find((e) => e.id === sel.id) || { ...sel, statut });
       notify(statut === "suspendu" ? "Entreprise suspendue." : "Entreprise réactivée.");
     } catch (e) { notify("Erreur : " + e.message); }
+  };
+
+  const deleteEtb = async () => {
+    setBusy(true);
+    try {
+      await db.supprimerEtablissementAdmin(sel.id);
+      const fresh = await db.listEtablissementsAdmin();
+      setEtbs(fresh);
+      setDelOpen(false); setDelText(""); setSel(null);
+      notify("Entreprise supprimée définitivement.");
+    } catch (e) { notify("Erreur : " + e.message); }
+    setBusy(false);
   };
 
   const active = etbs.filter((e) => !e.archived);
@@ -2595,9 +2612,38 @@ function AdminApp({ onLogout }) {
                 ))}
               </div>
             )}
+
+            <div className="mt-8 rounded-xl border border-rose-200 bg-rose-50/40 p-5">
+              <h3 className="flex items-center gap-2 text-sm font-semibold text-rose-800"><AlertTriangle size={16} /> Zone sensible</h3>
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-slate-700">Supprimer cette entreprise</p>
+                  <p className="text-xs text-slate-500">Efface l'entreprise, tout son contenu et le(s) compte(s) de connexion rattaché(s). Irréversible.</p>
+                </div>
+                <button onClick={() => { setDelText(""); setDelOpen(true); }} className="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white hover:bg-rose-700"><Trash2 size={15} /> Supprimer l'entreprise</button>
+              </div>
+            </div>
           </>
         )}
       </div>
+
+      {sel && (
+        <Modal open={delOpen} onClose={() => !busy && setDelOpen(false)} title="Supprimer définitivement l'entreprise">
+          <div className="space-y-4">
+            <div className="rounded-lg bg-rose-50 p-4 text-sm text-rose-800">
+              <p className="font-semibold">Cette action est irréversible.</p>
+              <p className="mt-1">Vous allez effacer définitivement <span className="font-semibold">{sel.nom}</span> : tout son matériel, ses réservations, ses accès et son compte de connexion.</p>
+            </div>
+            <p className="text-sm text-slate-600">Pour confirmer, tapez le nom exact de l'entreprise :</p>
+            <p className="rounded-lg bg-slate-100 px-3 py-2 text-center text-sm font-semibold text-slate-800">{sel.nom}</p>
+            <input autoFocus value={delText} onChange={(e) => setDelText(e.target.value)} className={inputCls} placeholder="Nom de l'entreprise" />
+            <div className="flex justify-end gap-2">
+              <button disabled={busy} onClick={() => setDelOpen(false)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-40">Annuler</button>
+              <button disabled={busy || delText.trim() !== (sel.nom || "").trim()} onClick={deleteEtb} className="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white enabled:hover:bg-rose-700 disabled:opacity-40"><Trash2 size={15} /> {busy ? "Suppression…" : "Supprimer définitivement"}</button>
+            </div>
+          </div>
+        </Modal>
+      )}
 
       {toast && <div className="fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-full bg-slate-900 px-4 py-2 text-sm text-white shadow-lg">{toast}</div>}
     </div>
