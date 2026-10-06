@@ -4,7 +4,7 @@ import {
   Search, ScanLine, ChevronDown, ChevronRight, X, FileText, QrCode,
   Shield, Check, Pencil, MapPin, Upload, CircleUser, Menu,
   ArrowRight, Package, Users, Warehouse, Filter, RotateCcw, Building2,
-  Eye, ChevronLeft, KeyRound, Smartphone, Unlock, LogOut, Link2, LayoutGrid, List as ListIcon, Wrench, AlertTriangle, BarChart3, CreditCard,
+  Eye, ChevronLeft, KeyRound, Smartphone, Unlock, LogOut, Link2, LayoutGrid, List as ListIcon, Wrench, AlertTriangle, BarChart3, CreditCard, Trash2,
 } from "lucide-react";
 import * as db from "./db.js";
 
@@ -2070,11 +2070,18 @@ function GestionAcces({ store, setStore, notify, etbId }) {
 }
 
 /* ================== Mon abonnement (côté client) ================== */
-function MonAbonnement({ notify }) {
+function MonAbonnement({ notify, establishmentName, onChanged }) {
   const [sub, setSub] = useState(null);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [choice, setChoice] = useState(1);
+
+  // zone sensible : résiliation / suppression
+  const [busy, setBusy] = useState(false);
+  const [resilOpen, setResilOpen] = useState(false);
+  const [delOpen, setDelOpen] = useState(false);
+  const [delStep, setDelStep] = useState(1);
+  const [delText, setDelText] = useState("");
 
   const reload = async () => {
     setLoading(true);
@@ -2087,6 +2094,24 @@ function MonAbonnement({ notify }) {
     setLoading(false);
   };
   useEffect(() => { reload(); }, []);
+
+  const doResilier = async () => {
+    setBusy(true);
+    try { await db.resilierMonAbonnement(); notify("Abonnement résilié."); setResilOpen(false); await reload(); onChanged && onChanged(); }
+    catch (e) { notify("Erreur : " + e.message); }
+    setBusy(false);
+  };
+  const doReactiver = async () => {
+    setBusy(true);
+    try { await db.reactiverMonAbonnement(); notify("Abonnement réactivé."); await reload(); onChanged && onChanged(); }
+    catch (e) { notify("Erreur : " + e.message); }
+    setBusy(false);
+  };
+  const doDelete = async () => {
+    setBusy(true);
+    try { await db.supprimerMonCompte(); /* la session se ferme : retour à l'écran de connexion */ }
+    catch (e) { notify("Erreur : " + e.message); setBusy(false); }
+  };
 
   if (loading || !sub) {
     return <div><PageTitle title="Mon abonnement" sub="Chargement…" /></div>;
@@ -2158,6 +2183,81 @@ function MonAbonnement({ notify }) {
           <button onClick={() => setOpen(false)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Annuler</button>
           <button disabled={choice === nb} onClick={saveChange} className="rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40">Enregistrer</button>
         </div>
+      </Modal>
+
+      {/* ---------- Zone sensible : résiliation / suppression ---------- */}
+      <div className="mt-6 rounded-xl border border-rose-200 bg-rose-50/40 p-6">
+        <h3 className="flex items-center gap-2 text-sm font-semibold text-rose-800"><AlertTriangle size={16} /> Zone sensible</h3>
+
+        {sub.statut === "annule" ? (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium text-slate-700">Abonnement résilié</p>
+              <p className="text-xs text-slate-500">L'accès au logiciel est bloqué. Vous pouvez le réactiver à tout moment.</p>
+            </div>
+            <button disabled={busy} onClick={doReactiver} className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white enabled:hover:bg-emerald-700 disabled:opacity-40"><RotateCcw size={15} /> Réactiver mon abonnement</button>
+          </div>
+        ) : (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium text-slate-700">Résilier mon abonnement</p>
+              <p className="text-xs text-slate-500">Arrête l'abonnement et bloque l'accès au logiciel. Vos données sont conservées.</p>
+            </div>
+            <button disabled={busy} onClick={() => setResilOpen(true)} className="inline-flex items-center gap-2 rounded-lg border border-rose-300 bg-white px-4 py-2 text-sm font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-40">Résilier</button>
+          </div>
+        )}
+
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-rose-200 pt-4">
+          <div>
+            <p className="text-sm font-medium text-slate-700">Supprimer définitivement mon compte</p>
+            <p className="text-xs text-slate-500">Efface l'entreprise, tout son contenu et le compte de connexion. Action irréversible.</p>
+          </div>
+          <button onClick={() => { setDelStep(1); setDelText(""); setDelOpen(true); }} className="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white hover:bg-rose-700"><Trash2 size={15} /> Supprimer mon compte</button>
+        </div>
+      </div>
+
+      {/* modal résiliation */}
+      <Modal open={resilOpen} onClose={() => !busy && setResilOpen(false)} title="Résilier l'abonnement">
+        <div className="space-y-4">
+          <p className="text-sm text-slate-600">Votre abonnement sera résilié et l'accès au logiciel sera bloqué pour tous vos accès. Vos données restent conservées et vous pourrez réactiver l'abonnement plus tard depuis cette page.</p>
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setResilOpen(false)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Annuler</button>
+            <button disabled={busy} onClick={doResilier} className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white enabled:hover:bg-rose-700 disabled:opacity-40">{busy ? "Veuillez patienter…" : "Résilier mon abonnement"}</button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* modal suppression de compte (double confirmation) */}
+      <Modal open={delOpen} onClose={() => !busy && setDelOpen(false)} title="Supprimer définitivement le compte">
+        {delStep === 1 ? (
+          <div className="space-y-4">
+            <div className="rounded-lg bg-rose-50 p-4 text-sm text-rose-800">
+              <p className="font-semibold">Cette action est irréversible.</p>
+              <p className="mt-1">En supprimant votre compte, vous effacez définitivement :</p>
+              <ul className="mt-2 list-disc space-y-0.5 pl-5">
+                <li>tout votre matériel et son inventaire</li>
+                <li>toutes les réservations et les transferts</li>
+                <li>tous les accès et leurs codes</li>
+                <li>votre entreprise et votre compte de connexion</li>
+              </ul>
+            </div>
+            <p className="text-sm text-slate-500">Personne ne pourra récupérer ces données. Êtes-vous sûr de vouloir continuer ?</p>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setDelOpen(false)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Annuler</button>
+              <button onClick={() => setDelStep(2)} className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white hover:bg-rose-700">Continuer</button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <p className="text-sm text-slate-600">Dernière étape. Pour confirmer, tapez le nom exact de votre entreprise :</p>
+            <p className="rounded-lg bg-slate-100 px-3 py-2 text-center text-sm font-semibold text-slate-800">{establishmentName}</p>
+            <input autoFocus value={delText} onChange={(e) => setDelText(e.target.value)} className={inputCls} placeholder="Nom de l'entreprise" />
+            <div className="flex justify-end gap-2">
+              <button disabled={busy} onClick={() => setDelStep(1)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-40">Retour</button>
+              <button disabled={busy || delText.trim() !== (establishmentName || "").trim()} onClick={doDelete} className="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white enabled:hover:bg-rose-700 disabled:opacity-40"><Trash2 size={15} /> {busy ? "Suppression…" : "Supprimer définitivement"}</button>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );
@@ -2657,22 +2757,127 @@ function StepDot({ n, active, done, label }) {
 function ClientSpace({ store, setStore, profile, onLogout }) {
   const establishmentName = profile.establishmentName;
   const etbId = profile.membre.etablissement_id;
-  const [active, setActive] = useState(null);   // accès sélectionné -> logiciel
 
-  if (active) {
+  const [list, setList] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [current, setCurrent] = useState(null);   // accès authentifié (après code)
+  const [inApp, setInApp] = useState(false);       // dans le logiciel
+
+  const reloadList = async () => {
+    setLoading(true);
+    try { setList(await db.listAcces()); } catch (e) { setList([]); }
+    setLoading(false);
+  };
+  useEffect(() => { reloadList(); }, []);
+
+  // Dans le logiciel
+  if (current && inApp) {
     return (
       <MainApp
         store={store} setStore={setStore}
-        access={{ sections: active.sections, establishmentId: etbId, establishmentName, accessLabel: active.label }}
+        access={{ sections: current.sections, establishmentId: etbId, establishmentName, accessLabel: current.label }}
         mode="session"
-        onExit={() => setActive(null)}
+        onExit={() => { setInApp(false); if (!current.gestionnaire) setCurrent(null); }}
       />
     );
   }
-  return <AccesGate establishmentName={establishmentName} onEnter={setActive} onLogout={onLogout} />;
+  // Gestionnaire connecté -> console de gestion
+  if (current && current.gestionnaire) {
+    return (
+      <ManagerSpace
+        establishmentName={establishmentName}
+        onOpenApp={() => setInApp(true)}
+        onSwitch={() => setCurrent(null)}
+        onLogout={onLogout}
+      />
+    );
+  }
+  if (loading) {
+    return <div className="flex h-full w-full items-center justify-center text-sm text-slate-400">Chargement…</div>;
+  }
+  // Aucun accès -> créer le premier (gestionnaire)
+  if (list.length === 0) {
+    return (
+      <FirstAccess establishmentName={establishmentName} onLogout={onLogout}
+        onCreated={(acc) => { setList([acc]); setCurrent(acc); }} />
+    );
+  }
+  // Écran de code (porte personnelle)
+  const onCode = (code) => {
+    const match = list.find((a) => String(a.code) === String(code).trim());
+    if (!match) return false;
+    setCurrent(match);
+    if (!match.gestionnaire) setInApp(true);
+    return true;
+  };
+  return <CodeGate establishmentName={establishmentName} onCode={onCode} onLogout={onLogout} />;
 }
 
-function AccesGate({ establishmentName, onEnter, onLogout }) {
+function AuthShell({ establishmentName, title, children, onLogout }) {
+  return (
+    <div className="flex min-h-full w-full items-center justify-center bg-slate-100 px-4 py-12">
+      <div className="w-full max-w-sm">
+        <div className="mb-6 flex flex-col items-center text-center">
+          <div className="mb-3 grid h-12 w-12 place-items-center rounded-xl bg-teal-700 text-white"><Package size={24} /></div>
+          <div className="text-lg font-semibold text-slate-800">MedPark</div>
+          <div className="text-sm text-teal-700">{establishmentName}</div>
+          <div className="mt-1 text-sm text-slate-400">{title}</div>
+        </div>
+        <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">{children}</div>
+        {onLogout && (
+          <button onClick={onLogout} className="mt-4 w-full text-center text-xs text-slate-400 hover:text-slate-600">Se déconnecter de l'entreprise</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CodeGate({ establishmentName, onCode, onLogout }) {
+  const [code, setCode] = useState("");
+  const [err, setErr] = useState("");
+  const submit = () => {
+    if (!code.trim()) return;
+    if (!onCode(code)) setErr("Code incorrect.");
+  };
+  return (
+    <AuthShell establishmentName={establishmentName} title="Entrez votre code d'accès" onLogout={onLogout}>
+      <Field label="Code d'accès">
+        <input autoFocus value={code} onChange={(e) => { setCode(e.target.value); setErr(""); }} onKeyDown={(e) => e.key === "Enter" && submit()} className={`${inputCls} plex-mono tracking-widest`} placeholder="Votre code" />
+      </Field>
+      {err && <p className="text-sm text-rose-600">{err}</p>}
+      <button onClick={submit} disabled={!code.trim()} className="w-full rounded-lg bg-teal-700 px-4 py-2.5 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40">Continuer</button>
+      <p className="text-center text-[11px] text-slate-400">Votre code vous est fourni par le gestionnaire de votre entreprise.</p>
+    </AuthShell>
+  );
+}
+
+function FirstAccess({ establishmentName, onCreated, onLogout }) {
+  const [label, setLabel] = useState("");
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const submit = async () => {
+    if (!label.trim() || code.trim().length < 4) { setErr("Indiquez un nom et un code d'au moins 4 caractères."); return; }
+    setBusy(true); setErr("");
+    try {
+      const acc = await db.createAcces(label.trim(), SECTIONS.map((s) => s.id), code.trim(), true);
+      onCreated(acc);
+    } catch (e) { setErr("Erreur : " + (e.message || "")); setBusy(false); }
+  };
+  return (
+    <AuthShell establishmentName={establishmentName} title="Créez l'accès gestionnaire" onLogout={onLogout}>
+      <p className="rounded-lg bg-teal-50 px-3 py-2 text-xs text-teal-800">Ce premier accès est le <strong>gestionnaire</strong> : c'est lui qui pourra créer et gérer tous les autres accès. Choisissez son code et gardez-le.</p>
+      <Field label="Nom de l'accès gestionnaire"><input autoFocus value={label} onChange={(e) => setLabel(e.target.value)} className={inputCls} placeholder="Ex : Direction" /></Field>
+      <Field label="Code du gestionnaire" hint="4 caractères minimum. C'est vous qui le choisissez.">
+        <input value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} className={`${inputCls} plex-mono tracking-widest`} placeholder="Choisissez un code" />
+      </Field>
+      {err && <p className="text-sm text-rose-600">{err}</p>}
+      <button onClick={submit} disabled={busy} className="w-full rounded-lg bg-teal-700 px-4 py-2.5 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40">{busy ? "Veuillez patienter…" : "Créer l'accès gestionnaire"}</button>
+    </AuthShell>
+  );
+}
+
+function ManagerSpace({ establishmentName, onOpenApp, onSwitch, onLogout }) {
   const [tab, setTab] = useState("acces");          // acces | abonnement
   const [list, setList] = useState([]);
   const [nbMax, setNbMax] = useState(1);
@@ -2683,12 +2888,8 @@ function AccesGate({ establishmentName, onEnter, onLogout }) {
 
   // création d'un accès
   const [open, setOpen] = useState(false);
-  const blank = { label: "", mode: "full", sections: SECTIONS.map((s) => s.id) };
+  const blank = { label: "", code: "", mode: "full", sections: SECTIONS.map((s) => s.id), gestionnaire: false };
   const [af, setAf] = useState(blank);
-  // entrée dans le logiciel (code)
-  const [enterFor, setEnterFor] = useState(null);
-  const [codeInput, setCodeInput] = useState("");
-  const [codeErr, setCodeErr] = useState("");
 
   const reload = async () => {
     setLoading(true);
@@ -2706,9 +2907,11 @@ function AccesGate({ establishmentName, onEnter, onLogout }) {
 
   const openNew = () => { setAf(blank); setOpen(true); };
   const saveNew = async () => {
+    const code = af.code.trim();
+    if (list.some((a) => String(a.code) === code)) { notify("Ce code est déjà utilisé par un autre accès."); return; }
     const sections = af.mode === "full" ? SECTIONS.map((s) => s.id) : af.sections;
     try {
-      await db.createAcces(af.label.trim(), sections);
+      await db.createAcces(af.label.trim(), sections, code, af.gestionnaire);
       await reload();
       notify("Accès créé.");
     } catch (e) { notify("Erreur : " + e.message); return; }
@@ -2717,12 +2920,6 @@ function AccesGate({ establishmentName, onEnter, onLogout }) {
   const remove = async (a) => {
     try { await db.deleteAcces(a.id); await reload(); notify("Accès supprimé."); }
     catch (e) { notify("Erreur : " + e.message); }
-  };
-  const askCode = (a) => { if (suspendu) return; setEnterFor(a); setCodeInput(""); setCodeErr(""); };
-  const confirmCode = () => {
-    if (suspendu) { setCodeErr("Compte suspendu."); return; }
-    if (codeInput.trim() === String(enterFor.code)) { onEnter(enterFor); }
-    else setCodeErr("Code incorrect.");
   };
 
   return (
@@ -2737,13 +2934,17 @@ function AccesGate({ establishmentName, onEnter, onLogout }) {
           <button onClick={() => setTab("acces")} className={`rounded-md px-3 py-1.5 ${tab === "acces" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}>Mes accès</button>
           <button onClick={() => setTab("abonnement")} className={`rounded-md px-3 py-1.5 ${tab === "abonnement" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}>Mon abonnement</button>
         </div>
-        <button onClick={onLogout} className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50"><LogOut size={15} /> Se déconnecter</button>
+        <div className="ml-auto flex items-center gap-2">
+          <button onClick={onOpenApp} disabled={suspendu} className="inline-flex items-center gap-1.5 rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40"><ArrowRight size={15} /> Ouvrir le logiciel</button>
+          <button onClick={onSwitch} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50"><KeyRound size={15} /> Changer d'accès</button>
+          <button onClick={onLogout} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50"><LogOut size={15} /> Se déconnecter</button>
+        </div>
       </header>
 
       <div className="flex-1 overflow-y-auto px-4 py-6 md:px-8">
         <div className="mx-auto max-w-4xl">
           {tab === "abonnement" ? (
-            <MonAbonnement notify={notify} />
+            <MonAbonnement notify={notify} establishmentName={establishmentName} onChanged={reload} />
           ) : (
             <div>
               <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
@@ -2788,11 +2989,11 @@ function AccesGate({ establishmentName, onEnter, onLogout }) {
                         <button onClick={() => remove(a)} title="Supprimer" className="rounded-md p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><X size={16} /></button>
                       </div>
                       <div className="mt-3 flex flex-wrap gap-1.5 border-t border-slate-100 pt-3">
+                        {a.gestionnaire && <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800 ring-1 ring-inset ring-amber-600/20">Gestionnaire</span>}
                         {a.sections.length === SECTIONS.length
                           ? <span className="rounded-full bg-teal-50 px-2.5 py-1 text-xs font-medium text-teal-800 ring-1 ring-inset ring-teal-600/20">Accès complet</span>
                           : SECTIONS.filter((s) => a.sections.includes(s.id)).map((s) => <span key={s.id} className="rounded-full bg-slate-50 px-2 py-0.5 text-[11px] text-slate-500">{s.label}</span>)}
                       </div>
-                      <button onClick={() => askCode(a)} disabled={suspendu} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-teal-700 px-3 py-2 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40"><ArrowRight size={15} /> Ouvrir le logiciel</button>
                     </div>
                   ))}
                 </div>
@@ -2805,8 +3006,13 @@ function AccesGate({ establishmentName, onEnter, onLogout }) {
       {/* modal création d'accès */}
       <Modal open={open} onClose={() => setOpen(false)} title="Créer un accès">
         <div className="space-y-4">
-          <p className="rounded-lg bg-teal-50 px-3 py-2 text-xs text-teal-800">C'est l'accès que vous êtes en train de créer. Un code à 6 chiffres sera généré pour ouvrir le logiciel.</p>
+          <p className="rounded-lg bg-teal-50 px-3 py-2 text-xs text-teal-800">Vous définissez vous-même le code de cet accès et vous le communiquez à la personne concernée. C'est avec ce code qu'elle ouvrira le logiciel.</p>
           <Field label="Nom de l'accès"><input autoFocus value={af.label} onChange={(e) => setAf((s) => ({ ...s, label: e.target.value }))} className={inputCls} placeholder="Ex : Accueil, Logistique, Direction…" /></Field>
+          <Field label="Code d'accès"><input value={af.code} onChange={(e) => setAf((s) => ({ ...s, code: e.target.value }))} className={`${inputCls} plex-mono tracking-widest`} placeholder="Ex : 4821" /></Field>
+          <button onClick={() => setAf((s) => ({ ...s, gestionnaire: !s.gestionnaire }))} className="flex w-full items-center gap-2.5 rounded-lg border border-slate-200 px-3 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50">
+            <span className={`grid h-4 w-4 shrink-0 place-items-center rounded border ${af.gestionnaire ? "border-amber-600 bg-amber-600 text-white" : "border-slate-300"}`}>{af.gestionnaire && <Check size={12} />}</span>
+            <span><span className="font-medium">Peut gérer les accès</span><br /><span className="text-xs text-slate-400">Cette personne pourra créer/supprimer des accès et voir l'abonnement.</span></span>
+          </button>
           <div>
             <span className="mb-2 block text-sm font-medium text-slate-700">Droits d'accès</span>
             <div className="grid grid-cols-2 gap-2">
@@ -2831,22 +3037,7 @@ function AccesGate({ establishmentName, onEnter, onLogout }) {
         </div>
         <div className="mt-5 flex justify-end gap-2">
           <button onClick={() => setOpen(false)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Annuler</button>
-          <button disabled={!af.label.trim() || (af.mode === "custom" && af.sections.length === 0)} onClick={saveNew} className="rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40">Créer l'accès</button>
-        </div>
-      </Modal>
-
-      {/* modal entrée dans le logiciel (code) */}
-      <Modal open={!!enterFor} onClose={() => setEnterFor(null)} title={enterFor ? `Ouvrir le logiciel — ${enterFor.label}` : ""}>
-        <div className="space-y-3">
-          <p className="text-sm text-slate-500">Saisissez le code de cet accès pour ouvrir le logiciel.</p>
-          <Field label="Code d'accès">
-            <input autoFocus value={codeInput} onChange={(e) => { setCodeInput(e.target.value); setCodeErr(""); }} onKeyDown={(e) => e.key === "Enter" && confirmCode()} className={`${inputCls} plex-mono tracking-widest`} placeholder="123456" />
-          </Field>
-          {codeErr && <p className="text-sm text-rose-600">{codeErr}</p>}
-        </div>
-        <div className="mt-5 flex justify-end gap-2">
-          <button onClick={() => setEnterFor(null)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Annuler</button>
-          <button disabled={!codeInput.trim()} onClick={confirmCode} className="rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40">Ouvrir</button>
+          <button disabled={!af.label.trim() || !af.code.trim() || (af.mode === "custom" && af.sections.length === 0)} onClick={saveNew} className="rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40">Créer l'accès</button>
         </div>
       </Modal>
 
