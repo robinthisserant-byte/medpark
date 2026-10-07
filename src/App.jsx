@@ -1103,6 +1103,10 @@ function TiersMateriel({ notify }) {
   const [codeFor, setCodeFor] = useState(null);
   const emptyForm = { name: "", numParc: "", numSerie: "", prix: "", category: "Fauteuil roulant", sub: "", parts: "", linked: [], warehouse: "", photo: null, pdf: null };
   const [f, setF] = useState(emptyForm);
+  const [q, setQ] = useState("");
+  const [catFilter, setCatFilter] = useState("");
+  const [repairFor, setRepairFor] = useState(null);   // matériel qu'on met en réparation
+  const [repairMotif, setRepairMotif] = useState("");
   const whName = (id) => warehouses.find((w) => w.id === id)?.name || "—";
 
   // Charge les matériels + entrepôts depuis la base de données.
@@ -1172,14 +1176,54 @@ function TiersMateriel({ notify }) {
       notify("Erreur : " + e.message);
     }
   };
+  // Mise en réparation directe (avec motif) / remise en service, depuis la carte.
+  const confirmRepair = async () => {
+    try {
+      await db.setProduitMaintStatus(repairFor.id, "reparation", repairMotif.trim());
+      await reload();
+      notify("Matériel mis en réparation.");
+    } catch (e) { notify("Erreur : " + e.message); return; }
+    setRepairFor(null); setRepairMotif("");
+  };
+  const backInService = async (p) => {
+    try {
+      await db.setProduitMaintStatus(p.id, "ok");
+      await reload();
+      notify("Matériel remis en service.");
+    } catch (e) { notify("Erreur : " + e.message); }
+  };
+
+  const active = products.filter((p) => !p.archived);
+  const cats = Array.from(new Set(active.map((p) => p.category).filter(Boolean))).sort();
+  const t = q.trim().toLowerCase();
+  const shownProducts = active.filter((p) => {
+    if (catFilter && p.category !== catFilter) return false;
+    if (!t) return true;
+    return [p.name, p.numParc, p.numSerie, p.category, p.sub, whName(p.warehouse)]
+      .filter(Boolean).join(" ").toLowerCase().includes(t);
+  });
 
   return (
     <div>
-      <PageTitle title="Fauteuils / Matériels" sub={loading ? "Chargement depuis la base…" : `${products.filter((p) => !p.archived).length} produit(s) au parc`}
+      <PageTitle title="Fauteuils / Matériels" sub={loading ? "Chargement depuis la base…" : `${active.length} produit(s) au parc`}
         action={<button onClick={openNew} className="inline-flex items-center gap-2 rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white hover:bg-teal-800"><Plus size={16} /> Ajouter un matériel</button>} />
 
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <div className="relative flex-1 min-w-[220px]">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Rechercher (nom, n° parc, série, entrepôt…)" className={`${inputCls} pl-9`} />
+        </div>
+        <select value={catFilter} onChange={(e) => setCatFilter(e.target.value)} className={`${inputCls} w-auto`}>
+          <option value="">Toutes les catégories</option>
+          {cats.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+      </div>
+
+      {!loading && shownProducts.length === 0 ? (
+        <Empty icon={Package} msg="Aucun matériel ne correspond à votre recherche." />
+      ) : (
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {products.filter((p) => !p.archived).map((p) => (
+        {shownProducts.map((p) => (
           <div key={p.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="mb-3 flex items-start justify-between">
               <div className="flex items-center gap-3">
@@ -1217,9 +1261,35 @@ function TiersMateriel({ notify }) {
                 <QrCode size={14} /> Code
               </button>
             </div>
+            <div className="mt-3 border-t border-slate-100 pt-3">
+              {p.maintStatus === "reparation" ? (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-1.5 text-xs font-medium text-rose-700"><Wrench size={13} /> En réparation</div>
+                  {p.motifMaint && <div className="rounded-md bg-rose-50 px-2 py-1 text-[11px] text-rose-700">Motif : {p.motifMaint}</div>}
+                  <button onClick={() => backInService(p)} className="inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"><Check size={13} /> Remettre en service</button>
+                </div>
+              ) : (
+                <button onClick={() => { setRepairFor(p); setRepairMotif(""); }} className="inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-rose-200 px-2.5 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50"><Wrench size={13} /> Mettre en réparation</button>
+              )}
+            </div>
           </div>
         ))}
       </div>
+      )}
+
+      {/* modal mise en réparation (motif) */}
+      <Modal open={!!repairFor} onClose={() => setRepairFor(null)} title={repairFor ? `Mettre en réparation — ${repairFor.name}` : ""}>
+        <div className="space-y-3">
+          <p className="text-sm text-slate-500">Indiquez le motif de la réparation : quoi réparer, où se situe le problème…</p>
+          <Field label="Motif de la réparation">
+            <textarea autoFocus value={repairMotif} onChange={(e) => setRepairMotif(e.target.value)} rows={3} className={inputCls} placeholder="Ex : Roue avant gauche voilée, frein à revoir…" />
+          </Field>
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button onClick={() => setRepairFor(null)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Annuler</button>
+          <button onClick={confirmRepair} className="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white hover:bg-rose-700"><Wrench size={15} /> Mettre en réparation</button>
+        </div>
+      </Modal>
 
       {/* add modal */}
       <Modal open={open} onClose={() => setOpen(false)} title={editing ? "Modifier le matériel" : "Ajouter un matériel"} wide>
@@ -1324,6 +1394,7 @@ function TiersSimple({ notify, kind }) {
   const [partners, setPartners] = useState([]);
   const [etbId, setEtbId] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [q, setQ] = useState("");
   const partnerName = (id) => partners.find((p) => p.id === id)?.name;
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -1370,13 +1441,23 @@ function TiersSimple({ notify, kind }) {
     }
   };
   const Icon = CFG.icon;
+  const tq = q.trim().toLowerCase();
+  const shownList = list.filter((x) =>
+    !tq || [x.name, x.address, isPatients ? partnerName(x.partenaire) : ""].filter(Boolean).join(" ").toLowerCase().includes(tq));
 
   return (
     <div>
       <PageTitle title={CFG.title} sub={loading ? "Chargement depuis la base…" : `${list.length} ${CFG.unit}`}
         action={<button onClick={openNew} className="inline-flex items-center gap-2 rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white hover:bg-teal-800"><Plus size={16} /> Ajouter</button>} />
+      <div className="mb-4 relative">
+        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Rechercher (nom${isPatients ? ", partenaire" : ", adresse"}…)`} className={`${inputCls} pl-9`} />
+      </div>
+      {!loading && shownList.length === 0 ? (
+        <Empty icon={Icon} msg="Aucun résultat ne correspond à votre recherche." />
+      ) : (
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {list.map((x) => (
+        {shownList.map((x) => (
           <div key={x.id} className="flex items-start justify-between rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="flex items-start gap-3">
               <div className="grid h-9 w-9 place-items-center rounded-lg bg-slate-100 text-slate-400"><Icon size={16} /></div>
@@ -1396,6 +1477,7 @@ function TiersSimple({ notify, kind }) {
           </div>
         ))}
       </div>
+      )}
       <Modal open={open} onClose={() => setOpen(false)} title={editing ? "Modifier" : CFG.add}>
         <div className="space-y-3">
           <Field label="Nom"><input value={f.name} onChange={(e) => setF((s) => ({ ...s, name: e.target.value }))} className={inputCls} /></Field>
@@ -1494,6 +1576,7 @@ function TiersArchive({ notify }) {
 /* ================== Inventaire ================== */
 function Inventaire({ notify }) {
   const [whFilter, setWhFilter] = useState("");
+  const [q, setQ] = useState("");
   const [correct, setCorrect] = useState(null);
   const [newWh, setNewWh] = useState("");
 
@@ -1515,7 +1598,9 @@ function Inventaire({ notify }) {
 
   const whName = (id) => allWarehouses.find((w) => w.id === id)?.name || id;
   const warehouses = allWarehouses.filter((w) => !w.archived);
-  const products = allProducts.filter((p) => !p.archived);
+  const tq = q.trim().toLowerCase();
+  const products = allProducts.filter((p) => !p.archived).filter((p) =>
+    !tq || [p.name, p.numParc, p.numSerie, p.category, p.sub].filter(Boolean).join(" ").toLowerCase().includes(tq));
   const isOut = (pid) => reservations.some((r) => r.product === pid && !r.archived && r.start <= TODAY && TODAY <= r.end);
 
   const doCorrect = async () => {
@@ -1533,6 +1618,10 @@ function Inventaire({ notify }) {
     <div>
       <PageTitle title="Inventaire — stock par entrepôt" sub="Chaque matériel est suivi individuellement (numéro unique), sans notion de quantité globale." />
       <div className="mb-4 flex flex-wrap items-center gap-2">
+        <div className="relative flex-1 min-w-[220px]">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Rechercher un matériel (nom, n° parc, catégorie…)" className={`${inputCls} pl-9`} />
+        </div>
         <Filter size={15} className="text-slate-400" />
         <span className="text-sm text-slate-500">Entrepôt :</span>
         <select value={whFilter} onChange={(e) => setWhFilter(e.target.value)} className={`${inputCls} w-auto`}>
@@ -1647,13 +1736,29 @@ function Maintenance({ notify, mode }) {
 
   const [planFor, setPlanFor] = useState(null);
   const [pf, setPf] = useState({ mode: "temps", every: 6 });
+  const [q, setQ] = useState("");
+  const [repairFor, setRepairFor] = useState(null);
+  const [repairMotif, setRepairMotif] = useState("");
 
   const toggleRepair = async (p) => {
+    // mise en réparation -> on demande le motif ; remise en service -> direct
+    if (p.maintStatus === "reparation") {
+      try {
+        await db.setProduitMaintStatus(p.id, "ok");
+        await reload();
+        notify("Matériel remis en service.");
+      } catch (e) { notify("Erreur : " + e.message); }
+    } else {
+      setRepairFor(p); setRepairMotif("");
+    }
+  };
+  const confirmRepair = async () => {
     try {
-      await db.setProduitMaintStatus(p.id, p.maintStatus === "reparation" ? "ok" : "reparation");
+      await db.setProduitMaintStatus(repairFor.id, "reparation", repairMotif.trim());
       await reload();
+      notify("Matériel mis en réparation.");
     } catch (e) { notify("Erreur : " + e.message); return; }
-    notify(p.maintStatus === "reparation" ? "Matériel remis en service." : "Matériel mis en réparation.");
+    setRepairFor(null); setRepairMotif("");
   };
   const openPlan = (p) => { setPlanFor(p); setPf(p.revision ? { mode: p.revision.mode, every: p.revision.every } : { mode: "temps", every: 6 }); };
   const savePlan = async () => {
@@ -1674,7 +1779,9 @@ function Maintenance({ notify, mode }) {
   };
 
   const alerts = products.filter((p) => p.maintStatus === "reparation" || revisionDue(p));
-  const rows = mode === "revisions" ? alerts : products;
+  const base = mode === "revisions" ? alerts : products;
+  const tq = q.trim().toLowerCase();
+  const rows = tq ? base.filter((p) => [p.name, p.numParc, p.category, p.sub].filter(Boolean).join(" ").toLowerCase().includes(tq)) : base;
 
   return (
     <div>
@@ -1684,6 +1791,13 @@ function Maintenance({ notify, mode }) {
         action={mode === "revisions" && alerts.length > 0 && (
           <button onClick={() => window.print()} className="inline-flex items-center gap-2 rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-900"><FileText size={16} /> Exporter / Imprimer (PDF)</button>
         )} />
+
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <div className="relative flex-1 min-w-[220px]">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Rechercher un matériel (nom, n° parc, catégorie…)" className={`${inputCls} pl-9`} />
+        </div>
+      </div>
 
       {mode === "revisions" && alerts.length === 0 ? (
         <Empty icon={Check} msg="Aucun matériel à réviser ou réparer. Tout est à jour." />
@@ -1710,7 +1824,7 @@ function Maintenance({ notify, mode }) {
                     </td>
                     <td className="px-4 py-3">
                       {inRepair
-                        ? <span className="inline-flex items-center gap-1.5 rounded-full bg-rose-50 px-2.5 py-0.5 text-xs font-medium text-rose-700 ring-1 ring-inset ring-rose-600/20"><Wrench size={12} /> En réparation</span>
+                        ? <div><span className="inline-flex items-center gap-1.5 rounded-full bg-rose-50 px-2.5 py-0.5 text-xs font-medium text-rose-700 ring-1 ring-inset ring-rose-600/20"><Wrench size={12} /> En réparation</span>{p.motifMaint && <div className="mt-1 text-[11px] text-slate-500">Motif : {p.motifMaint}</div>}</div>
                         : <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20"><Check size={12} /> En service</span>}
                     </td>
                     <td className="px-4 py-3">
@@ -1756,6 +1870,20 @@ function Maintenance({ notify, mode }) {
           </>
         )}
       </Modal>
+
+      {/* modal mise en réparation (motif) */}
+      <Modal open={!!repairFor} onClose={() => setRepairFor(null)} title={repairFor ? `Mettre en réparation — ${repairFor.name}` : ""}>
+        <div className="space-y-3">
+          <p className="text-sm text-slate-500">Indiquez le motif de la réparation : quoi réparer, où se situe le problème…</p>
+          <Field label="Motif de la réparation">
+            <textarea autoFocus value={repairMotif} onChange={(e) => setRepairMotif(e.target.value)} rows={3} className={inputCls} placeholder="Ex : Roue avant gauche voilée, frein à revoir…" />
+          </Field>
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button onClick={() => setRepairFor(null)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Annuler</button>
+          <button onClick={confirmRepair} className="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white hover:bg-rose-700"><Wrench size={15} /> Mettre en réparation</button>
+        </div>
+      </Modal>
     </div>
   );
 }
@@ -1769,6 +1897,7 @@ function Magasinier({ notify }) {
   const [transfers, setTransfers] = useState([]);
   const [typeFilter, setTypeFilter] = useState("");
   const [whFilter, setWhFilter] = useState("");
+  const [q, setQ] = useState("");
 
   useEffect(() => {
     (async () => {
@@ -1799,6 +1928,8 @@ function Magasinier({ notify }) {
   let list = moves.sort((a, b) => a.date.localeCompare(b.date));
   if (typeFilter) list = list.filter((m) => m.type === typeFilter);
   if (whFilter) list = list.filter((m) => m.fromWh === whFilter);
+  const tq = q.trim().toLowerCase();
+  if (tq) list = list.filter((m) => [productName(m.product), parc(m.product), m.from, m.to].filter(Boolean).join(" ").toLowerCase().includes(tq));
 
   const TYPE = {
     Transfert: "bg-violet-50 text-violet-700 ring-violet-600/20",
@@ -1810,6 +1941,10 @@ function Magasinier({ notify }) {
     <div>
       <PageTitle title="Vue magasinier" sub="Tous les mouvements de matériel à préparer : transferts entre entrepôts, livraisons chez les clients, retours." />
       <div className="mb-4 flex flex-wrap items-center gap-2">
+        <div className="relative flex-1 min-w-[220px]">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Rechercher (matériel, n° parc, lieu…)" className={`${inputCls} pl-9`} />
+        </div>
         <Filter size={15} className="text-slate-400" />
         <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className={`${inputCls} w-auto`}>
           <option value="">Tous les types</option>
