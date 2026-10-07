@@ -146,6 +146,7 @@ function produitFromDb(r) {
     revision: r.revision || null,
     maintStatus: r.statut_maint || "ok",
     motifMaint: r.motif_maint || "",
+    brouillon: !!r.brouillon,
     archived: r.archived,
     etb: r.etablissement_id,
   };
@@ -155,6 +156,7 @@ function produitFromDb(r) {
 function produitToDb(f, etbId) {
   return {
     etablissement_id: etbId,
+    brouillon: !!f.brouillon,
     nom: f.name,
     n_parc: f.numParc || null,
     n_serie: f.numSerie || null,
@@ -182,7 +184,7 @@ export async function listEntrepots() {
   const { data, error } = await scope(
     supabase.from("entrepots").select("*").eq("archived", false).order("nom"));
   if (error) throw error;
-  return (data || []).map((r) => ({ id: r.id, name: r.nom, address: r.adresse }));
+  return (data || []).map((r) => ({ id: r.id, name: r.nom, address: r.adresse, brouillon: !!r.brouillon }));
 }
 
 // Liste tous les matériels de mon entreprise.
@@ -235,7 +237,7 @@ const TIERS = {
 };
 
 function tiersFromDb(r) {
-  return { id: r.id, name: r.nom, address: r.adresse || "", partenaire: r.partenaire_id || "" };
+  return { id: r.id, name: r.nom, address: r.adresse || "", partenaire: r.partenaire_id || "", brouillon: !!r.brouillon };
 }
 
 export async function listTiers(kind) {
@@ -247,7 +249,7 @@ export async function listTiers(kind) {
 
 export async function createTiers(kind, f, etbId) {
   const t = TIERS[kind];
-  const row = { etablissement_id: etbId, nom: f.name, adresse: f.address || null };
+  const row = { etablissement_id: etbId, nom: f.name, adresse: f.address || null, brouillon: !!f.brouillon };
   if (t.hasPartner) row.partenaire_id = f.partenaire || null;
   const { data, error } = await supabase.from(t.table).insert(row).select().single();
   if (error) throw error;
@@ -256,7 +258,7 @@ export async function createTiers(kind, f, etbId) {
 
 export async function updateTiers(kind, id, f) {
   const t = TIERS[kind];
-  const row = { nom: f.name, adresse: f.address || null };
+  const row = { nom: f.name, adresse: f.address || null, brouillon: !!f.brouillon };
   if (t.hasPartner) row.partenaire_id = f.partenaire || null;
   const { error } = await supabase.from(t.table).update(row).eq("id", id);
   if (error) throw error;
@@ -302,6 +304,7 @@ function reservationFromDb(r) {
     end: r.fin,
     note: r.note || "",
     pdf: r.pdf || null,
+    brouillon: !!r.brouillon,
     archived: r.archived,
     etb: r.etablissement_id,
   };
@@ -311,6 +314,7 @@ function reservationFromDb(r) {
 function reservationToDb(f, etbId) {
   return {
     etablissement_id: etbId,
+    brouillon: !!f.brouillon,
     produit_id: f.product || null,
     patient_id: f.patient || null,
     retrait_id: f.warehouse || null,
@@ -336,6 +340,13 @@ export async function createReservations(list, etbId) {
   const { data, error } = await supabase.from("reservations").insert(rows).select();
   if (error) throw error;
   return (data || []).map(reservationFromDb);
+}
+
+// Met à jour une réservation existante (utilisé pour finaliser/éditer un brouillon).
+export async function updateReservation(id, f, etbId) {
+  const row = reservationToDb(f, etbId);
+  const { error } = await supabase.from("reservations").update(row).eq("id", id);
+  if (error) throw error;
 }
 
 // Archive ou désarchive une réservation.
@@ -421,6 +432,35 @@ export async function createTransfert(f, etbId) {
 // Archive ou désarchive un transfert.
 export async function setTransfertArchived(id, archived) {
   const { error } = await supabase.from("transferts").update({ archived }).eq("id", id);
+  if (error) throw error;
+}
+
+/* ------------------------------------------------------------------ *
+ *  NAVETTES (table "navettes") : liaison régulière entre deux entrepôts.
+ *  jours = jours de la semaine où la navette circule (1=lundi … 7=dimanche).
+ * ------------------------------------------------------------------ */
+function navetteFromDb(r) {
+  return { id: r.id, a: r.entrepot_a || "", b: r.entrepot_b || "", jours: Array.isArray(r.jours) ? r.jours : [] };
+}
+
+export async function listNavettes() {
+  const { data, error } = await scope(
+    supabase.from("navettes").select("*").eq("archived", false).order("created_at", { ascending: true }));
+  if (error) throw error;
+  return (data || []).map(navetteFromDb);
+}
+
+export async function createNavette(a, b, jours) {
+  const etbId = await getEtablissementId();
+  const { data, error } = await supabase.from("navettes").insert({
+    etablissement_id: etbId, entrepot_a: a, entrepot_b: b, jours: jours || [], archived: false,
+  }).select().single();
+  if (error) throw error;
+  return navetteFromDb(data);
+}
+
+export async function deleteNavette(id) {
+  const { error } = await supabase.from("navettes").update({ archived: true }).eq("id", id);
   if (error) throw error;
 }
 
