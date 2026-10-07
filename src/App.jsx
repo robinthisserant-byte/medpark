@@ -19,7 +19,7 @@ const toISO = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDat
 // Date du jour réelle (avant : date de démonstration figée au 16/06/2026).
 const TODAY = toISO(new Date());
 const parseISO = (s) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
-const fmtFR = (s) => { const d = parseISO(s); return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`; };
+const fmtFR = (s) => { if (!s) return "—"; const d = parseISO(s); return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`; };
 const dayBefore = (s) => { const d = parseISO(s); d.setDate(d.getDate() - 1); return toISO(d); };
 const MONTHS = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Août","Septembre","Octobre","Novembre","Décembre"];
 const WD = ["Lun","Mar","Mer","Jeu","Ven","Sam","Dim"];
@@ -36,7 +36,9 @@ const mensuel = (nb) => (nb || 0) * PRIX_PAR_ACCES_MOIS;
 const premierPaiement = (nb) => LICENCE_UNIQUE + mensuel(nb);
 
 function resStatus(r) {
+  if (r.brouillon) return "brouillon";
   if (r.archived) return "archivée";
+  if (!r.start || !r.end) return "brouillon";
   if (r.start > TODAY) return "à venir";
   if (r.end < TODAY) return "en retard";
   return "en cours";
@@ -145,6 +147,7 @@ const STATUS_STYLE = {
   "en retard": "bg-rose-50 text-rose-700 ring-rose-600/20",
   "archivée":  "bg-slate-100 text-slate-500 ring-slate-400/20",
   "terminé":   "bg-slate-100 text-slate-500 ring-slate-400/20",
+  "brouillon": "bg-amber-50 text-amber-700 ring-amber-600/20",
 };
 function Status({ s }) {
   return (
@@ -281,6 +284,7 @@ function MainApp({ store, setStore, access, mode, onExit }) {
       { id: "tiers-patients", label: "Patients / Clients" },
       { id: "tiers-partenaires", label: "Partenaires" },
       { id: "tiers-lieux", label: "Lieux de stockage" },
+      { id: "tiers-navettes", label: "Navettes" },
       { id: "tiers-archive", label: "Archivé / Passé" },
     ]},
     { id: "inventaire", label: "Inventaire", icon: Warehouse, subs: [
@@ -304,6 +308,7 @@ function MainApp({ store, setStore, access, mode, onExit }) {
   const [view, setView] = useState(NAV[0]?.subs[0]?.id || "res-list");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [toast, setToast] = useState(null);
+  const [resDraft, setResDraft] = useState(null);   // brouillon de réservation en cours d'édition
 
   // Data is scoped to the current establishment: all accesses of the same
   // establishment share these records; other establishments don't see them.
@@ -363,7 +368,7 @@ function MainApp({ store, setStore, access, mode, onExit }) {
                     {sec.subs.map((sub) => (
                       <button
                         key={sub.id}
-                        onClick={() => { setView(sub.id); }}
+                        onClick={() => { if (sub.id === "res-new") setResDraft(null); setView(sub.id); }}
                         className={`block w-full rounded-md px-3 py-1.5 text-left text-[13px] ${view === sub.id ? "bg-teal-50 font-medium text-teal-800" : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"}`}>
                         {sub.label}
                       </button>
@@ -410,8 +415,8 @@ function MainApp({ store, setStore, access, mode, onExit }) {
         </header>
 
         <div className="flex-1 px-4 py-6 md:px-8">
-          {view === "res-list" && <ResList notify={notify} go={setView} />}
-          {view === "res-new" && <ResNew notify={notify} go={setView} />}
+          {view === "res-list" && <ResList notify={notify} go={setView} onEditDraft={(r) => { setResDraft(r); setView("res-new"); }} />}
+          {view === "res-new" && <ResNew notify={notify} go={setView} draft={resDraft} onDone={() => setResDraft(null)} />}
           {view === "res-archive" && <ResArchive notify={notify} />}
           {view === "agenda-current" && <Agenda archived={false} notify={notify} />}
           {view === "agenda-archive" && <Agenda archived={true} notify={notify} />}
@@ -419,6 +424,7 @@ function MainApp({ store, setStore, access, mode, onExit }) {
           {view === "tiers-patients" && <TiersSimple store={scoped} setStore={setStore} notify={notify} kind="patients" etbId={etbId} />}
           {view === "tiers-partenaires" && <TiersSimple store={scoped} setStore={setStore} notify={notify} kind="partenaires" etbId={etbId} />}
           {view === "tiers-lieux" && <TiersSimple store={scoped} setStore={setStore} notify={notify} kind="warehouses" etbId={etbId} />}
+          {view === "tiers-navettes" && <Navettes notify={notify} />}
           {view === "tiers-archive" && <TiersArchive notify={notify} />}
           {view === "inventaire-stock" && <Inventaire notify={notify} />}
           {view === "maintenance-parc" && <Maintenance notify={notify} mode="parc" />}
@@ -453,12 +459,13 @@ function PageTitle({ title, sub, action }) {
 }
 
 /* ================== Réservations : liste ================== */
-function ResList({ notify, go }) {
+function ResList({ notify, go, onEditDraft }) {
   const [q, setQ] = useState("");
   const [sort, setSort] = useState("date");
   const [viewMode, setViewMode] = useState("list");
   const [scanOpen, setScanOpen] = useState(false);
   const [detail, setDetail] = useState(null);
+  const [vue, setVue] = useState("actives");   // actives | brouillons
 
   const [products, setProducts] = useState([]);
   const [patients, setPatients] = useState([]);
@@ -487,7 +494,10 @@ function ResList({ notify, go }) {
   const helpers = { productName, patientName, whName };
   const store = { products, patients, warehouses, reservations };
 
-  let rows = reservations.filter((r) => !r.archived);
+  const notArchived = reservations.filter((r) => !r.archived);
+  const activeRes = notArchived.filter((r) => !r.brouillon);
+  const draftRes = notArchived.filter((r) => r.brouillon);
+  let rows = vue === "brouillons" ? draftRes : activeRes;
   if (q.trim()) {
     const t = q.toLowerCase();
     rows = rows.filter((r) =>
@@ -495,9 +505,10 @@ function ResList({ notify, go }) {
         .join(" ").toLowerCase().includes(t));
   }
   rows = [...rows].sort((a, b) =>
-    sort === "date" ? a.start.localeCompare(b.start)
+    sort === "date" ? (a.start || "").localeCompare(b.start || "")
     : sort === "produit" ? productName(a.product).localeCompare(productName(b.product))
     : resStatus(a).localeCompare(resStatus(b)));
+  const openRow = (r) => r.brouillon ? (onEditDraft && onEditDraft(r)) : setDetail(r);
 
   const endReservation = async (res, returnWh) => {
     try {
@@ -519,7 +530,11 @@ function ResList({ notify, go }) {
 
   return (
     <div>
-      <PageTitle title="Voir les réservations" sub={`${rows.length} réservation(s) active(s)`} />
+      <PageTitle title="Voir les réservations" sub={vue === "brouillons" ? `${draftRes.length} brouillon(s)` : `${activeRes.length} réservation(s) active(s)`} />
+      <div className="mb-3 flex rounded-lg bg-slate-100 p-0.5 text-sm font-medium w-fit">
+        <button onClick={() => setVue("actives")} className={`rounded-md px-3 py-1.5 ${vue === "actives" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}>Actives ({activeRes.length})</button>
+        <button onClick={() => setVue("brouillons")} className={`rounded-md px-3 py-1.5 ${vue === "brouillons" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}>Brouillons ({draftRes.length})</button>
+      </div>
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <div className="relative flex-1 min-w-[220px]">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -544,12 +559,12 @@ function ResList({ notify, go }) {
       ) : viewMode === "cards" ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {rows.map((r) => (
-            <button key={r.id} onClick={() => setDetail(r)} className="rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-teal-300 hover:shadow-md">
+            <button key={r.id} onClick={() => openRow(r)} className="rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-teal-300 hover:shadow-md">
               <div className="mb-3 flex items-center justify-between">
                 <span className="plex-mono text-[11px] text-slate-400">{r.id}</span>
                 <Status s={resStatus(r)} />
               </div>
-              <div className="mb-3 text-base font-semibold text-slate-800">{productName(r.product)}</div>
+              <div className="mb-3 text-base font-semibold text-slate-800">{r.product ? productName(r.product) : "(matériel non défini)"}</div>
               <dl className="space-y-1.5 text-sm">
                 <div className="flex items-center gap-2 text-slate-600"><Users size={14} className="text-slate-400" />{patientName(r.patient)}</div>
                 <div className="flex items-center gap-2 text-slate-600"><Warehouse size={14} className="text-slate-400" />{whName(r.warehouse)}</div>
@@ -580,10 +595,10 @@ function ResList({ notify, go }) {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {rows.map((r) => (
-                <tr key={r.id} onClick={() => setDetail(r)} className="cursor-pointer hover:bg-slate-50">
+                <tr key={r.id} onClick={() => openRow(r)} className="cursor-pointer hover:bg-slate-50">
                   <td className="px-4 py-3"><Status s={resStatus(r)} /></td>
                   <td className="px-4 py-3">
-                    <div className="font-medium text-slate-800">{productName(r.product)}</div>
+                    <div className="font-medium text-slate-800">{r.product ? productName(r.product) : "(matériel non défini)"}</div>
                     <div className="plex-mono text-[11px] text-slate-400">{r.id}</div>
                   </td>
                   <td className="px-4 py-3 text-slate-600">{patientName(r.patient)}</td>
@@ -746,8 +761,12 @@ function Row({ label, value }) {
 }
 
 /* ================== Réservations : nouvelle ================== */
-function ResNew({ notify, go }) {
-  const [f, setF] = useState({ product: "", patient: "", warehouse: "", returnWh: "", start: "", end: "", note: "", pdf: null });
+function ResNew({ notify, go, draft, onDone }) {
+  const [f, setF] = useState(() => draft ? {
+    product: draft.product || "", patient: draft.patient || "", warehouse: draft.warehouse || "",
+    returnWh: draft.returnWh || draft.returnWarehouse || "", start: draft.start || "", end: draft.end || "",
+    note: draft.note || "", pdf: draft.pdf || null,
+  } : { product: "", patient: "", warehouse: "", returnWh: "", start: "", end: "", note: "", pdf: null });
   const [cal, setCal] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
   const [qpOpen, setQpOpen] = useState(false);
   const [qp, setQp] = useState({ name: "", address: "" });
@@ -756,16 +775,17 @@ function ResNew({ notify, go }) {
   const [patients, setPatients] = useState([]);
   const [warehouses, setWarehouses] = useState([]);
   const [reservations, setReservations] = useState([]);
+  const [navettes, setNavettes] = useState([]);
   const [etbId, setEtbId] = useState(null);
   const [saving, setSaving] = useState(false);
 
-  // Charge les listes (produits, patients, lieux) et les réservations depuis la base.
+  // Charge les listes (produits, patients, lieux), les réservations et les navettes.
   const reload = async () => {
     try {
-      const [prods, pats, whs, res, eid] = await Promise.all([
-        db.listProduits(), db.listTiers("patients"), db.listEntrepots(), db.listReservations(), db.getEtablissementId(),
+      const [prods, pats, whs, res, nav, eid] = await Promise.all([
+        db.listProduits(), db.listTiers("patients"), db.listEntrepots(), db.listReservations(), db.listNavettes(), db.getEtablissementId(),
       ]);
-      setProducts(prods); setPatients(pats); setWarehouses(whs); setReservations(res); setEtbId(eid);
+      setProducts(prods); setPatients(pats); setWarehouses(whs); setReservations(res); setNavettes(nav); setEtbId(eid);
     } catch (e) {
       notify("Erreur de connexion à la base : " + e.message);
     }
@@ -775,18 +795,49 @@ function ResNew({ notify, go }) {
   const occupied = useMemo(() => {
     const set = new Set();
     if (!f.product) return set;
-    reservations.filter((r) => r.product === f.product && !r.archived).forEach((r) => {
+    reservations.filter((r) => r.product === f.product && !r.archived && !r.brouillon && r.id !== draft?.id && r.start && r.end).forEach((r) => {
       let d = parseISO(r.start); const end = parseISO(r.end);
       while (d <= end) { set.add(toISO(d)); d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1); }
     });
     return set;
-  }, [f.product, reservations]);
+  }, [f.product, reservations, draft]);
 
   // Blocage des doublons : conflit si le même produit est déjà réservé sur une période qui chevauche
   const conflict = useMemo(() => {
     if (!f.product || !f.start || !f.end || f.start > f.end) return null;
-    return reservations.find((r) => r.product === f.product && !r.archived && f.start <= r.end && r.start <= f.end) || null;
-  }, [f.product, f.start, f.end, reservations]);
+    return reservations.find((r) => r.product === f.product && !r.archived && !r.brouillon && r.id !== draft?.id && f.start <= r.end && r.start <= f.end) || null;
+  }, [f.product, f.start, f.end, reservations, draft]);
+
+  // Navette : le matériel sera-t-il au bon entrepôt à temps pour le retrait ?
+  const navetteInfo = useMemo(() => {
+    if (!f.product || !f.warehouse || !f.start) return null;
+    const prod = products.find((p) => p.id === f.product);
+    if (!prod) return null;
+    // Où se trouvera le matériel juste avant la date de début ?
+    const priors = reservations.filter((r) => r.product === f.product && !r.archived && !r.brouillon && r.id !== draft?.id && r.end && r.end <= f.start);
+    let location, availableFrom;
+    if (priors.length) {
+      const last = priors.slice().sort((a, b) => b.end.localeCompare(a.end))[0];
+      location = last.returnWh || last.returnWarehouse || last.warehouse;
+      availableFrom = last.end;
+    } else {
+      location = prod.warehouse; availableFrom = null;
+    }
+    if (!location || location === f.warehouse) return null;   // déjà au bon endroit
+    const nav = navettes.find((n) => (n.a === location && n.b === f.warehouse) || (n.b === location && n.a === f.warehouse)) || null;
+    // Un jour de navette tombe-t-il entre la disponibilité et la date de début ?
+    let feasible = false, nextDay = null;
+    if (nav && nav.jours.length) {
+      let d = parseISO(availableFrom || TODAY);
+      d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);   // après le retour
+      const target = parseISO(f.start);
+      while (d <= target) {
+        if (nav.jours.includes(isoWeekday(d))) { feasible = true; nextDay = toISO(d); break; }
+        d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
+      }
+    }
+    return { location, availableFrom, nav, feasible, nextDay };
+  }, [f.product, f.warehouse, f.start, reservations, navettes, products, draft]);
 
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
   const whName = (id) => warehouses.find((w) => w.id === id)?.name || id;
@@ -809,40 +860,57 @@ function ResNew({ notify, go }) {
     return (prod?.linked || []).map((id) => products.find((x) => x.id === id)).filter((x) => x && !x.archived);
   }, [f.product, products]);
 
-  const submit = async () => {
-    if (conflict) { notify("Réservation bloquée : le matériel est déjà réservé sur cette période."); return; }
-    const toAdd = [{ ...f }];
-    let skipped = 0;
-    linkedProducts.forEach((lp) => {
-      const c = reservations.find((r) => r.product === lp.id && !r.archived && f.start <= r.end && r.start <= f.end);
-      if (c) { skipped++; return; }
-      toAdd.push({ ...f, product: lp.id });
-    });
+  // Enregistrer en brouillon (informations incomplètes autorisées).
+  const saveDraft = async () => {
+    if (!f.product) { notify("Choisissez au moins un matériel pour enregistrer un brouillon."); return; }
     setSaving(true);
     try {
-      await db.createReservations(toAdd, etbId);
+      if (draft) await db.updateReservation(draft.id, { ...f, brouillon: true }, etbId);
+      else await db.createReservations([{ ...f, brouillon: true }], etbId);
+    } catch (e) { setSaving(false); notify("Erreur : " + e.message); return; }
+    setSaving(false);
+    notify("Brouillon enregistré.");
+    onDone && onDone();
+    go("res-list");
+  };
+
+  const submit = async () => {
+    if (conflict) { notify("Réservation bloquée : le matériel est déjà réservé sur cette période."); return; }
+    setSaving(true);
+    try {
+      if (draft) {
+        // finaliser un brouillon existant
+        await db.updateReservation(draft.id, { ...f, brouillon: false }, etbId);
+      } else {
+        const toAdd = [{ ...f, brouillon: false }];
+        let skipped = 0;
+        linkedProducts.forEach((lp) => {
+          const c = reservations.find((r) => r.product === lp.id && !r.archived && !r.brouillon && f.start <= r.end && r.start <= f.end);
+          if (c) { skipped++; return; }
+          toAdd.push({ ...f, product: lp.id, brouillon: false });
+        });
+        await db.createReservations(toAdd, etbId);
+      }
     } catch (e) {
       setSaving(false);
       notify("Erreur d'enregistrement : " + e.message);
       return;
     }
     setSaving(false);
-    const added = toAdd.length - 1;
-    notify(added > 0
-      ? `Réservation créée avec ${added} matériel(s) associé(s)${skipped ? ` (${skipped} indisponible(s) ignoré(s))` : ""}.`
-      : "Réservation créée.");
+    notify(draft ? "Réservation finalisée." : "Réservation créée.");
+    onDone && onDone();
     go("res-list");
   };
 
   return (
     <div>
-      <PageTitle title="Nouvelle réservation" sub="Tout est connecté : la réservation alimente l'agenda et le stock." />
+      <PageTitle title={draft ? "Finaliser le brouillon" : "Nouvelle réservation"} sub="Tout est connecté : la réservation alimente l'agenda et le stock." />
       <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
         <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-5">
           <Field label="Produit">
             <select value={f.product} onChange={(e) => set("product", e.target.value)} className={inputCls}>
               <option value="">Choisir un matériel…</option>
-              {products.filter((p) => !p.archived).map((p) => <option key={p.id} value={p.id}>{p.name} — {p.sub}</option>)}
+              {products.filter((p) => !p.archived && !p.brouillon).map((p) => <option key={p.id} value={p.id}>{p.name} — {p.sub}</option>)}
             </select>
           </Field>
           {linkedProducts.length > 0 && (
@@ -868,12 +936,32 @@ function ResNew({ notify, go }) {
           </div>
           {f.start && f.end && f.start > f.end && <p className="text-xs text-rose-600">La date de fin doit suivre la date de début.</p>}
           {conflict && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 ring-1 ring-inset ring-rose-600/20">Ce matériel est déjà réservé sur une période qui chevauche ({fmtFR(conflict.start)} → {fmtFR(conflict.end)}). Choisissez une autre période ou un autre matériel.</p>}
+          {navetteInfo && !navetteInfo.feasible && (
+            <div className="rounded-lg bg-amber-50 px-3 py-2.5 text-xs text-amber-800 ring-1 ring-inset ring-amber-600/20">
+              <div className="flex items-start gap-1.5"><AlertTriangle size={14} className="mt-0.5 shrink-0 text-amber-600" />
+                <span>
+                  <strong>Attention — matériel pas au bon entrepôt.</strong> Après sa précédente location, ce matériel sera à <strong>{whName(navetteInfo.location)}</strong>{navetteInfo.availableFrom ? ` (retour le ${fmtFR(navetteInfo.availableFrom)})` : ""}, pas à <strong>{whName(f.warehouse)}</strong>.{" "}
+                  {navetteInfo.nav
+                    ? `La navette ne circule pas entre ces deux dates pour l'amener à temps (retrait prévu le ${fmtFR(f.start)}).`
+                    : `Aucune navette ne relie ces deux entrepôts.`}{" "}
+                  Il faudra l'acheminer autrement (magasinier, récupération sur place…).
+                </span>
+              </div>
+            </div>
+          )}
+          {navetteInfo && navetteInfo.feasible && (
+            <div className="rounded-lg bg-teal-50 px-3 py-2.5 text-xs text-teal-800 ring-1 ring-inset ring-teal-600/20">
+              <div className="flex items-start gap-1.5"><Truck size={14} className="mt-0.5 shrink-0 text-teal-600" />
+                <span>Le matériel sera à <strong>{whName(navetteInfo.location)}</strong> : la navette peut l'amener à <strong>{whName(f.warehouse)}</strong> dès le <strong>{fmtFR(navetteInfo.nextDay)}</strong>, avant le retrait du {fmtFR(f.start)}.</span>
+              </div>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-4">
             <Field label="Patient / Client">
               <div className="flex gap-2">
                 <select value={f.patient} onChange={(e) => set("patient", e.target.value)} className={inputCls}>
                   <option value="">Sélectionner…</option>
-                  {patients.filter((p) => !p.archived).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  {patients.filter((p) => !p.archived && !p.brouillon).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
                 <button type="button" onClick={() => setQpOpen(true)} title="Créer un patient" className="shrink-0 rounded-lg border border-slate-200 px-2.5 text-slate-500 hover:bg-slate-50"><Plus size={16} /></button>
               </div>
@@ -881,14 +969,14 @@ function ResNew({ notify, go }) {
             <Field label="Lieu de retrait">
               <select value={f.warehouse} onChange={(e) => set("warehouse", e.target.value)} className={inputCls}>
                 <option value="">Sélectionner…</option>
-                {warehouses.filter((w) => !w.archived).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+                {warehouses.filter((w) => !w.archived && !w.brouillon).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
               </select>
             </Field>
           </div>
           <Field label="Lieu de retour prévu" hint="Modifiable en cours de réservation. Sert à anticiper les transferts.">
             <select value={f.returnWh} onChange={(e) => set("returnWh", e.target.value)} className={inputCls}>
               <option value="">Même lieu que le retrait</option>
-              {warehouses.filter((w) => !w.archived).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+              {warehouses.filter((w) => !w.archived && !w.brouillon).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
             </select>
           </Field>
           <Field label="Note libre">
@@ -901,9 +989,10 @@ function ResNew({ notify, go }) {
               <input type="file" accept="application/pdf" className="hidden" onChange={(e) => set("pdf", e.target.files?.[0]?.name || null)} />
             </label>
           </Field>
-          <div className="flex justify-end gap-2 pt-1">
-            <button onClick={() => go("res-list")} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Annuler</button>
-            <button disabled={!valid} onClick={submit} className="rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40">Créer la réservation</button>
+          <div className="flex flex-wrap justify-end gap-2 pt-1">
+            <button onClick={() => { onDone && onDone(); go("res-list"); }} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Annuler</button>
+            <button disabled={!f.product || saving} onClick={saveDraft} title="Enregistrer même si des informations manquent" className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-800 enabled:hover:bg-amber-100 disabled:opacity-40"><FileText size={15} /> Enregistrer en brouillon</button>
+            <button disabled={!valid} onClick={submit} className="rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40">{draft ? "Finaliser la réservation" : "Créer la réservation"}</button>
           </div>
         </div>
 
@@ -1019,7 +1108,7 @@ function Agenda({ archived, notify }) {
   }, []);
 
   const productName = (id) => products.find((p) => p.id === id)?.name || id;
-  const events = reservations.filter((r) => r.archived === archived);
+  const events = reservations.filter((r) => r.archived === archived && !r.brouillon);
   const cells = monthMatrix(cal.y, cal.m);
 
   const visible = (r) => {
@@ -1105,6 +1194,7 @@ function TiersMateriel({ notify }) {
   const [f, setF] = useState(emptyForm);
   const [q, setQ] = useState("");
   const [catFilter, setCatFilter] = useState("");
+  const [vue, setVue] = useState("parc");            // parc | brouillons
   const [repairFor, setRepairFor] = useState(null);   // matériel qu'on met en réparation
   const [repairMotif, setRepairMotif] = useState("");
   const whName = (id) => warehouses.find((w) => w.id === id)?.name || "—";
@@ -1146,19 +1236,20 @@ function TiersMateriel({ notify }) {
     setOpen(true);
   };
 
-  const submit = async () => {
+  const submit = async (asDraft = false) => {
     const fields = {
       name: f.name, numParc: f.numParc, numSerie: f.numSerie, prix: f.prix,
       category: f.category, sub: f.sub || (SUBS[f.category]?.[0] ?? ""),
       parts: f.parts.split(",").map((x) => x.trim()).filter(Boolean), linked: f.linked, warehouse: f.warehouse, photo: f.photo, pdf: f.pdf,
+      brouillon: asDraft,
     };
     try {
       if (editing) {
         await db.updateProduit(editing.id, fields, etbId);
-        notify("Matériel modifié et enregistré.");
+        notify(asDraft ? "Brouillon enregistré." : "Matériel enregistré.");
       } else {
         await db.createProduit(fields, etbId);
-        notify("Matériel ajouté et enregistré.");
+        notify(asDraft ? "Brouillon enregistré." : "Matériel ajouté et enregistré.");
       }
       await reload();
     } catch (e) {
@@ -1194,9 +1285,12 @@ function TiersMateriel({ notify }) {
   };
 
   const active = products.filter((p) => !p.archived);
-  const cats = Array.from(new Set(active.map((p) => p.category).filter(Boolean))).sort();
+  const parc = active.filter((p) => !p.brouillon);
+  const drafts = active.filter((p) => p.brouillon);
+  const sourceList = vue === "brouillons" ? drafts : parc;
+  const cats = Array.from(new Set(parc.map((p) => p.category).filter(Boolean))).sort();
   const t = q.trim().toLowerCase();
-  const shownProducts = active.filter((p) => {
+  const shownProducts = sourceList.filter((p) => {
     if (catFilter && p.category !== catFilter) return false;
     if (!t) return true;
     return [p.name, p.numParc, p.numSerie, p.category, p.sub, whName(p.warehouse)]
@@ -1205,8 +1299,13 @@ function TiersMateriel({ notify }) {
 
   return (
     <div>
-      <PageTitle title="Fauteuils / Matériels" sub={loading ? "Chargement depuis la base…" : `${active.length} produit(s) au parc`}
+      <PageTitle title="Fauteuils / Matériels" sub={loading ? "Chargement depuis la base…" : `${parc.length} produit(s) au parc`}
         action={<button onClick={openNew} className="inline-flex items-center gap-2 rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white hover:bg-teal-800"><Plus size={16} /> Ajouter un matériel</button>} />
+
+      <div className="mb-3 flex rounded-lg bg-slate-100 p-0.5 text-sm font-medium w-fit">
+        <button onClick={() => setVue("parc")} className={`rounded-md px-3 py-1.5 ${vue === "parc" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}>Au parc ({parc.length})</button>
+        <button onClick={() => setVue("brouillons")} className={`rounded-md px-3 py-1.5 ${vue === "brouillons" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}>Brouillons ({drafts.length})</button>
+      </div>
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <div className="relative flex-1 min-w-[220px]">
@@ -1231,7 +1330,7 @@ function TiersMateriel({ notify }) {
                   {p.photo ? <img src={p.photo} alt="" className="h-full w-full object-cover" /> : <Package size={20} />}
                 </div>
                 <div>
-                  <div className="font-semibold text-slate-800">{p.name}</div>
+                  <div className="flex items-center gap-2"><span className="font-semibold text-slate-800">{p.name || "(sans nom)"}</span>{p.brouillon && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800">Brouillon</span>}</div>
                   <div className="text-xs text-slate-400">{p.category} · {p.sub}</div>
                 </div>
               </div>
@@ -1305,7 +1404,7 @@ function TiersMateriel({ notify }) {
             <Field label="Entrepôt de stockage">
               <select value={f.warehouse} onChange={(e) => set("warehouse", e.target.value)} className={inputCls}>
                 <option value="">Sélectionner…</option>
-                {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+                {warehouses.filter((w) => !w.brouillon).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
               </select>
             </Field>
           </div>
@@ -1340,8 +1439,8 @@ function TiersMateriel({ notify }) {
           <div className="sm:col-span-2">
             <Field label="Matériels associés (réservés ensemble)" hint="Sélectionnez d'autres matériels du parc : réserver celui-ci les réservera aussi automatiquement.">
               <div className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-slate-200 p-2">
-                {products.filter((p) => !p.archived && p.id !== editing?.id).length === 0 && <div className="px-1 py-2 text-xs text-slate-400">Aucun autre matériel dans le parc pour l'instant.</div>}
-                {products.filter((p) => !p.archived && p.id !== editing?.id).map((p) => {
+                {products.filter((p) => !p.archived && !p.brouillon && p.id !== editing?.id).length === 0 && <div className="px-1 py-2 text-xs text-slate-400">Aucun autre matériel dans le parc pour l'instant.</div>}
+                {products.filter((p) => !p.archived && !p.brouillon && p.id !== editing?.id).map((p) => {
                   const on = f.linked.includes(p.id);
                   return (
                     <button type="button" key={p.id} onClick={() => set("linked", on ? f.linked.filter((x) => x !== p.id) : [...f.linked, p.id])} className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm text-slate-700 hover:bg-slate-50">
@@ -1355,9 +1454,10 @@ function TiersMateriel({ notify }) {
             </Field>
           </div>
         </div>
-        <div className="mt-5 flex justify-end gap-2">
+        <div className="mt-5 flex flex-wrap justify-end gap-2">
           <button onClick={() => setOpen(false)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Annuler</button>
-          <button disabled={!f.name || !f.warehouse} onClick={submit} className="rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40">{editing ? "Enregistrer" : "Ajouter (génère le code)"}</button>
+          <button disabled={!f.name} onClick={() => submit(true)} title="Enregistrer même si des informations manquent" className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-800 enabled:hover:bg-amber-100 disabled:opacity-40"><FileText size={15} /> Enregistrer en brouillon</button>
+          <button disabled={!f.name || !f.warehouse} onClick={() => submit(false)} className="rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40">{editing ? "Enregistrer" : "Ajouter (génère le code)"}</button>
         </div>
       </Modal>
 
@@ -1395,6 +1495,7 @@ function TiersSimple({ notify, kind }) {
   const [etbId, setEtbId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");
+  const [vue, setVue] = useState("actifs");          // actifs | brouillons
   const partnerName = (id) => partners.find((p) => p.id === id)?.name;
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -1416,14 +1517,15 @@ function TiersSimple({ notify, kind }) {
 
   const openNew = () => { setEditing(null); setF({ name: "", address: "", partenaire: "" }); setOpen(true); };
   const openEdit = (x) => { setEditing(x); setF({ name: x.name, address: x.address || "", partenaire: x.partenaire || "" }); setOpen(true); };
-  const submit = async () => {
+  const submit = async (asDraft = false) => {
     try {
+      const payload = { ...f, brouillon: asDraft };
       if (editing) {
-        await db.updateTiers(kind, editing.id, f);
-        notify("Modifié et enregistré.");
+        await db.updateTiers(kind, editing.id, payload);
+        notify(asDraft ? "Brouillon enregistré." : "Modifié et enregistré.");
       } else {
-        await db.createTiers(kind, f, etbId);
-        notify("Ajouté et enregistré.");
+        await db.createTiers(kind, payload, etbId);
+        notify(asDraft ? "Brouillon enregistré." : "Ajouté et enregistré.");
       }
       await reload();
     } catch (e) {
@@ -1441,14 +1543,21 @@ function TiersSimple({ notify, kind }) {
     }
   };
   const Icon = CFG.icon;
+  const actifs = list.filter((x) => !x.brouillon);
+  const drafts = list.filter((x) => x.brouillon);
+  const source = vue === "brouillons" ? drafts : actifs;
   const tq = q.trim().toLowerCase();
-  const shownList = list.filter((x) =>
+  const shownList = source.filter((x) =>
     !tq || [x.name, x.address, isPatients ? partnerName(x.partenaire) : ""].filter(Boolean).join(" ").toLowerCase().includes(tq));
 
   return (
     <div>
-      <PageTitle title={CFG.title} sub={loading ? "Chargement depuis la base…" : `${list.length} ${CFG.unit}`}
+      <PageTitle title={CFG.title} sub={loading ? "Chargement depuis la base…" : `${actifs.length} ${CFG.unit}`}
         action={<button onClick={openNew} className="inline-flex items-center gap-2 rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white hover:bg-teal-800"><Plus size={16} /> Ajouter</button>} />
+      <div className="mb-3 flex rounded-lg bg-slate-100 p-0.5 text-sm font-medium w-fit">
+        <button onClick={() => setVue("actifs")} className={`rounded-md px-3 py-1.5 ${vue === "actifs" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}>Actifs ({actifs.length})</button>
+        <button onClick={() => setVue("brouillons")} className={`rounded-md px-3 py-1.5 ${vue === "brouillons" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}>Brouillons ({drafts.length})</button>
+      </div>
       <div className="mb-4 relative">
         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Rechercher (nom${isPatients ? ", partenaire" : ", adresse"}…)`} className={`${inputCls} pl-9`} />
@@ -1462,7 +1571,7 @@ function TiersSimple({ notify, kind }) {
             <div className="flex items-start gap-3">
               <div className="grid h-9 w-9 place-items-center rounded-lg bg-slate-100 text-slate-400"><Icon size={16} /></div>
               <div>
-                <div className="font-medium text-slate-800">{x.name}</div>
+                <div className="flex items-center gap-2"><span className="font-medium text-slate-800">{x.name || "(sans nom)"}</span>{x.brouillon && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800">Brouillon</span>}</div>
                 <div className="text-xs text-slate-400">{x.address || "Adresse non renseignée"}</div>
                 {isPatients && x.partenaire && partnerName(x.partenaire) && (
                   <div className="mt-1 inline-flex items-center gap-1 rounded-full bg-teal-50 px-2 py-0.5 text-[11px] font-medium text-teal-700"><Building2 size={10} /> {partnerName(x.partenaire)}</div>
@@ -1491,9 +1600,117 @@ function TiersSimple({ notify, kind }) {
             </Field>
           )}
         </div>
+        <div className="mt-5 flex flex-wrap justify-end gap-2">
+          <button onClick={() => setOpen(false)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Annuler</button>
+          <button disabled={!f.name} onClick={() => submit(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-800 enabled:hover:bg-amber-100 disabled:opacity-40"><FileText size={15} /> Enregistrer en brouillon</button>
+          <button disabled={!f.name} onClick={() => submit(false)} className="rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40">{editing ? "Enregistrer" : "Ajouter"}</button>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+const JOURS_SEM = [[1, "Lun"], [2, "Mar"], [3, "Mer"], [4, "Jeu"], [5, "Ven"], [6, "Sam"], [7, "Dim"]];
+const joursLabel = (jours) => (jours || []).slice().sort((a, b) => a - b).map((j) => (JOURS_SEM.find((x) => x[0] === j) || [, "?"])[1]).join(", ");
+// jour ISO 1=lundi … 7=dimanche à partir d'un objet Date
+const isoWeekday = (d) => ((d.getDay() + 6) % 7) + 1;
+
+/* ================== Navettes entre entrepôts ================== */
+function Navettes({ notify }) {
+  const [navettes, setNavettes] = useState([]);
+  const [warehouses, setWarehouses] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [open, setOpen] = useState(false);
+  const [f, setF] = useState({ a: "", b: "", jours: [] });
+  const whName = (id) => warehouses.find((w) => w.id === id)?.name || "—";
+
+  const reload = async () => {
+    setLoading(true);
+    try {
+      const [nav, whs] = await Promise.all([db.listNavettes(), db.listEntrepots()]);
+      setNavettes(nav); setWarehouses(whs.filter((w) => !w.brouillon));
+    } catch (e) { notify("Erreur de connexion à la base : " + e.message); }
+    setLoading(false);
+  };
+  useEffect(() => { reload(); }, []);
+
+  const toggleJour = (j) => setF((s) => ({ ...s, jours: s.jours.includes(j) ? s.jours.filter((x) => x !== j) : [...s.jours, j] }));
+  const openNew = () => { setF({ a: "", b: "", jours: [] }); setOpen(true); };
+  const save = async () => {
+    if (!f.a || !f.b) { notify("Choisissez les deux entrepôts reliés."); return; }
+    if (f.a === f.b) { notify("Choisissez deux entrepôts différents."); return; }
+    if (f.jours.length === 0) { notify("Choisissez au moins un jour de circulation."); return; }
+    try { await db.createNavette(f.a, f.b, f.jours); await reload(); notify("Navette créée."); }
+    catch (e) { notify("Erreur : " + e.message); return; }
+    setOpen(false);
+  };
+  const remove = async (n) => {
+    try { await db.deleteNavette(n.id); await reload(); notify("Navette supprimée."); }
+    catch (e) { notify("Erreur : " + e.message); }
+  };
+
+  return (
+    <div>
+      <PageTitle title="Navettes entre entrepôts" sub="Liaisons régulières entre deux entrepôts. Elles servent à anticiper si un matériel peut arriver à temps pour une réservation."
+        action={<button onClick={openNew} disabled={warehouses.length < 2} className="inline-flex items-center gap-2 rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40"><Plus size={16} /> Ajouter une navette</button>} />
+
+      {warehouses.length < 2 && !loading && (
+        <div className="mb-4 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800">Il faut au moins deux lieux de stockage pour créer une navette.</div>
+      )}
+
+      {loading ? null : navettes.length === 0 ? (
+        <Empty icon={Truck} msg="Aucune navette définie pour l'instant." />
+      ) : (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {navettes.map((n) => (
+            <div key={n.id} className="flex items-start justify-between rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-800">
+                  <span className="rounded-md bg-slate-100 px-2 py-0.5">{whName(n.a)}</span>
+                  <ArrowRight size={14} className="rotate-90 text-slate-400 sm:rotate-0" />
+                  <span className="rounded-md bg-slate-100 px-2 py-0.5">{whName(n.b)}</span>
+                </div>
+                <div className="mt-2 flex items-center gap-1.5 text-xs text-slate-500"><CalendarDays size={13} className="text-teal-600" /> Circule : <span className="font-medium text-slate-700">{joursLabel(n.jours) || "—"}</span></div>
+                <div className="mt-1 text-[11px] text-slate-400">La navette circule dans les deux sens.</div>
+              </div>
+              <button onClick={() => remove(n)} title="Supprimer" className="rounded-md p-1.5 text-slate-300 hover:bg-rose-50 hover:text-rose-600"><X size={16} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Modal open={open} onClose={() => setOpen(false)} title="Nouvelle navette">
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Entrepôt A">
+              <select value={f.a} onChange={(e) => setF((s) => ({ ...s, a: e.target.value }))} className={inputCls}>
+                <option value="">Sélectionner…</option>
+                {warehouses.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+              </select>
+            </Field>
+            <Field label="Entrepôt B">
+              <select value={f.b} onChange={(e) => setF((s) => ({ ...s, b: e.target.value }))} className={inputCls}>
+                <option value="">Sélectionner…</option>
+                {warehouses.filter((w) => w.id !== f.a).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+              </select>
+            </Field>
+          </div>
+          <div>
+            <span className="mb-2 block text-sm font-medium text-slate-700">Jours de circulation</span>
+            <div className="flex flex-wrap gap-2">
+              {JOURS_SEM.map(([j, lbl]) => {
+                const on = f.jours.includes(j);
+                return (
+                  <button type="button" key={j} onClick={() => toggleJour(j)} className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${on ? "border-teal-600 bg-teal-50 text-teal-800" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>{lbl}</button>
+                );
+              })}
+            </div>
+            <p className="mt-2 text-xs text-slate-400">Ex : une navette tous les mercredis = cochez « Mer ».</p>
+          </div>
+        </div>
         <div className="mt-5 flex justify-end gap-2">
           <button onClick={() => setOpen(false)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Annuler</button>
-          <button disabled={!f.name} onClick={submit} className="rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40">{editing ? "Enregistrer" : "Ajouter"}</button>
+          <button onClick={save} className="rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white hover:bg-teal-800">Créer la navette</button>
         </div>
       </Modal>
     </div>
@@ -1597,9 +1814,9 @@ function Inventaire({ notify }) {
   useEffect(() => { reload(); }, []);
 
   const whName = (id) => allWarehouses.find((w) => w.id === id)?.name || id;
-  const warehouses = allWarehouses.filter((w) => !w.archived);
+  const warehouses = allWarehouses.filter((w) => !w.archived && !w.brouillon);
   const tq = q.trim().toLowerCase();
-  const products = allProducts.filter((p) => !p.archived).filter((p) =>
+  const products = allProducts.filter((p) => !p.archived && !p.brouillon).filter((p) =>
     !tq || [p.name, p.numParc, p.numSerie, p.category, p.sub].filter(Boolean).join(" ").toLowerCase().includes(tq));
   const isOut = (pid) => reservations.some((r) => r.product === pid && !r.archived && r.start <= TODAY && TODAY <= r.end);
 
@@ -1716,8 +1933,8 @@ function Maintenance({ notify, mode }) {
   };
   useEffect(() => { reload(); }, []);
 
-  const products = allProducts.filter((p) => !p.archived);
-  const usageCount = (pid) => reservations.filter((r) => r.product === pid).length;
+  const products = allProducts.filter((p) => !p.archived && !p.brouillon);
+  const usageCount = (pid) => reservations.filter((r) => r.product === pid && !r.brouillon).length;
   const monthsBetween = (isoA, isoB) => { const a = parseISO(isoA), b = parseISO(isoB); return (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth()); };
   const revisionDue = (p) => {
     if (!p.revision) return false;
@@ -1921,7 +2138,7 @@ function Magasinier({ notify }) {
   const moves = [];
   store.transfers.filter((t) => !t.archived).forEach((t) =>
     moves.push({ type: "Transfert", product: t.product, fromWh: t.from, from: whName(t.from), to: whName(t.to), date: t.date }));
-  store.reservations.filter((r) => !r.archived).forEach((r) => {
+  store.reservations.filter((r) => !r.archived && !r.brouillon).forEach((r) => {
     moves.push({ type: "Livraison", product: r.product, fromWh: r.warehouse, from: whName(r.warehouse), to: patientName(r.patient), date: r.start });
     moves.push({ type: "Retour", product: r.product, fromWh: null, from: patientName(r.patient), to: whName(r.returnWh || r.warehouse), date: r.end });
   });
@@ -1954,7 +2171,7 @@ function Magasinier({ notify }) {
         </select>
         <select value={whFilter} onChange={(e) => setWhFilter(e.target.value)} className={`${inputCls} w-auto`}>
           <option value="">Tout entrepôt de départ</option>
-          {store.warehouses.filter((w) => !w.archived).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+          {store.warehouses.filter((w) => !w.archived && !w.brouillon).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
         </select>
       </div>
 
@@ -2456,7 +2673,7 @@ function Transport({ notify, archived }) {
   const suggestions = useMemo(() => {
     if (archived) return [];
     const earliestByProduct = {};
-    reservations.filter((r) => !r.archived).forEach((r) => {
+    reservations.filter((r) => !r.archived && !r.brouillon && r.start).forEach((r) => {
       const cur = earliestByProduct[r.product];
       if (!cur || r.start < cur.start) earliestByProduct[r.product] = r;
     });
