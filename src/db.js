@@ -145,6 +145,7 @@ function produitFromDb(r) {
     pdf: r.pdf || null,
     revision: r.revision || null,
     maintStatus: r.statut_maint || "ok",
+    motifMaint: r.motif_maint || "",
     archived: r.archived,
     etb: r.etablissement_id,
   };
@@ -356,9 +357,13 @@ export async function setProduitEntrepot(id, entrepotId) {
   if (error) throw error;
 }
 
-// Change le statut de maintenance d'un matériel ("ok" / "reparation").
-export async function setProduitMaintStatus(id, statut) {
-  const { error } = await supabase.from("produits").update({ statut_maint: statut }).eq("id", id);
+// Change le statut de maintenance d'un matériel ("ok" / "reparation"),
+// avec un motif facultatif (quoi réparer / où). Remis à vide quand on repasse en service.
+export async function setProduitMaintStatus(id, statut, motif) {
+  const patch = { statut_maint: statut };
+  if (statut === "reparation") patch.motif_maint = motif || null;
+  else patch.motif_maint = null;
+  const { error } = await supabase.from("produits").update(patch).eq("id", id);
   if (error) throw error;
 }
 
