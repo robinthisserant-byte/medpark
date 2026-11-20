@@ -5,6 +5,7 @@ import {
   Shield, Check, Pencil, MapPin, Upload, CircleUser, Menu,
   ArrowRight, Package, Users, Warehouse, Filter, RotateCcw, Building2,
   Eye, ChevronLeft, KeyRound, Smartphone, Unlock, LogOut, Link2, LayoutGrid, List as ListIcon, Wrench, AlertTriangle, BarChart3, CreditCard, Trash2,
+  Mail, Inbox, Send, Phone, UserPlus,
 } from "lucide-react";
 import * as db from "./db.js";
 
@@ -2795,21 +2796,35 @@ function Transport({ notify, archived }) {
  * ================================================================== */
 function AdminApp({ onLogout }) {
   const [etbs, setEtbs] = useState([]);
+  const [demandes, setDemandes] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [view, setView] = useState("entreprises");   // entreprises | demandes
   const [sel, setSel] = useState(null);
   const [acces, setAcces] = useState([]);
   const [toast, setToast] = useState(null);
-  const notify = (m) => { setToast(m); setTimeout(() => setToast(null), 2600); };
+  const notify = (m) => { setToast(m); setTimeout(() => setToast(null), 3200); };
 
-  // suppression d'une entreprise (admin)
+  // suppression d'une entreprise
   const [delOpen, setDelOpen] = useState(false);
   const [delText, setDelText] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // création d'une entreprise (par l'admin)
+  const emptyCreate = { companyName: "", email: "", password: "", nbAcces: 1, codeGestionnaire: "", tarifAnnuel: "", renouvellement: "" };
+  const [createOpen, setCreateOpen] = useState(false);
+  const [cf, setCf] = useState(emptyCreate);
+  const setC = (k, v) => setCf((s) => ({ ...s, [k]: v }));
+
+  // édition du paiement annuel d'une entreprise
+  const [payOpen, setPayOpen] = useState(false);
+  const [pf, setPf] = useState({ tarifAnnuel: "", renouvellement: "" });
+
   const reload = async () => {
     setLoading(true);
-    try { setEtbs(await db.listEtablissementsAdmin()); }
-    catch (e) { notify("Erreur de connexion à la base : " + e.message); }
+    try {
+      const [es, ds] = await Promise.all([db.listEtablissementsAdmin(), db.listDemandes().catch(() => [])]);
+      setEtbs(es); setDemandes(ds);
+    } catch (e) { notify("Erreur de connexion à la base : " + e.message); }
     setLoading(false);
   };
   useEffect(() => { reload(); }, []);
@@ -2841,7 +2856,46 @@ function AdminApp({ onLogout }) {
     setBusy(false);
   };
 
+  const openCreate = (d) => {
+    setCf(d ? { ...emptyCreate, companyName: d.entreprise || "", email: d.email || "", nbAcces: d.nbAcces || 1 } : emptyCreate);
+    setCreateOpen(true);
+  };
+  const submitCreate = async () => {
+    if (!cf.companyName.trim() || !cf.email.trim() || cf.password.length < 6 || !cf.codeGestionnaire.trim()) {
+      notify("Renseignez le nom, un email, un mot de passe (6 car. min) et le code gestionnaire."); return;
+    }
+    setBusy(true);
+    try {
+      await db.adminCreerEntreprise({
+        companyName: cf.companyName.trim(), email: cf.email.trim(), password: cf.password,
+        nbAcces: Number(cf.nbAcces) || 1, codeGestionnaire: cf.codeGestionnaire.trim(),
+        tarifAnnuel: cf.tarifAnnuel, renouvellement: cf.renouvellement || null,
+      });
+      setEtbs(await db.listEtablissementsAdmin());
+      setCreateOpen(false); setCf(emptyCreate);
+      notify("Entreprise créée. Communiquez au client : email, mot de passe et code gestionnaire.");
+    } catch (e) { notify("Erreur : " + (e.message || "")); }
+    setBusy(false);
+  };
+
+  const traiterDemande = async (d, statut) => {
+    try { await db.setDemandeStatut(d.id, statut); setDemandes(await db.listDemandes()); notify(statut === "traitee" ? "Demande marquée traitée." : "Demande refusée."); }
+    catch (e) { notify("Erreur : " + e.message); }
+  };
+
+  const openPay = () => { setPf({ tarifAnnuel: sel.tarifAnnuel != null ? String(sel.tarifAnnuel) : "", renouvellement: sel.renouvellement || "" }); setPayOpen(true); };
+  const submitPay = async () => {
+    try {
+      await db.setEtbPaiement(sel.id, pf.tarifAnnuel, pf.renouvellement || null);
+      const fresh = await db.listEtablissementsAdmin();
+      setEtbs(fresh); setSel(fresh.find((e) => e.id === sel.id) || sel);
+      setPayOpen(false); notify("Paiement annuel mis à jour.");
+    } catch (e) { notify("Erreur : " + e.message); }
+  };
+
   const active = etbs.filter((e) => !e.archived);
+  const nouvelles = demandes.filter((d) => d.statut === "nouvelle").length;
+  const demStatut = { nouvelle: { label: "Nouvelle", cls: "bg-amber-50 text-amber-700 ring-amber-600/20" }, traitee: { label: "Traitée", cls: "bg-emerald-50 text-emerald-700 ring-emerald-600/20" }, refusee: { label: "Refusée", cls: "bg-slate-100 text-slate-500 ring-slate-400/20" } };
 
   return (
     <div className="min-h-full w-full bg-slate-100">
@@ -2850,7 +2904,7 @@ function AdminApp({ onLogout }) {
           <div className="grid h-9 w-9 place-items-center rounded-lg bg-white/10"><Shield size={18} /></div>
           <div>
             <div className="text-sm font-semibold">Administration MedPark</div>
-            <div className="text-[11px] text-slate-400">Entreprises inscrites &amp; abonnements</div>
+            <div className="text-[11px] text-slate-400">Entreprises, demandes &amp; abonnements</div>
           </div>
           {onLogout && (
             <button onClick={onLogout} className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-white/15 px-3 py-1.5 text-sm font-medium text-slate-200 hover:bg-white/10"><LogOut size={15} /> Se déconnecter</button>
@@ -2861,38 +2915,79 @@ function AdminApp({ onLogout }) {
       <div className="mx-auto max-w-5xl px-6 py-8">
         {!sel ? (
           <>
-            <div className="mb-5">
-              <h1 className="text-xl font-semibold text-slate-800">Entreprises</h1>
-              <p className="mt-0.5 text-sm text-slate-400">{loading ? "Chargement…" : `${active.length} entreprise(s) inscrite(s)`}</p>
-            </div>
-            {loading ? null : active.length === 0 ? (
-              <Empty icon={Building2} msg="Aucune entreprise inscrite pour l'instant." />
-            ) : (
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                {active.map((e) => {
-                  const st = SUB_STATUS[e.statut] || SUB_STATUS.actif;
-                  return (
-                    <button key={e.id} onClick={() => openEtb(e)} className="group rounded-xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:border-slate-300 hover:shadow-md">
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="grid h-10 w-10 place-items-center rounded-lg bg-slate-100 text-slate-500"><Building2 size={18} /></div>
-                          <div>
-                            <div className="font-semibold text-slate-800">{e.nom}</div>
-                            <div className="plex-mono text-xs text-slate-400">{e.code}</div>
-                          </div>
-                        </div>
-                        <ChevronRight size={18} className="text-slate-300 group-hover:text-slate-500" />
-                      </div>
-                      <div className="mt-4 flex flex-wrap items-center gap-2 text-sm">
-                        <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${st.cls}`}>{st.label}</span>
-                        <span className="text-slate-500">{e.nbAcces} accès</span>
-                        <span className="text-slate-300">·</span>
-                        <span className="font-medium text-slate-700">{euros(mensuel(e.nbAcces))} / mois</span>
-                      </div>
-                    </button>
-                  );
-                })}
+            <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex rounded-lg bg-slate-200/70 p-0.5 text-sm font-medium">
+                <button onClick={() => setView("entreprises")} className={`rounded-md px-3 py-1.5 ${view === "entreprises" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}>Entreprises ({active.length})</button>
+                <button onClick={() => setView("demandes")} className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 ${view === "demandes" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}>Demandes{nouvelles > 0 && <span className="grid h-5 min-w-[20px] place-items-center rounded-full bg-amber-500 px-1 text-[11px] font-semibold text-white">{nouvelles}</span>}</button>
               </div>
+              <button onClick={() => openCreate(null)} className="inline-flex items-center gap-2 rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white hover:bg-teal-800"><UserPlus size={16} /> Créer une entreprise</button>
+            </div>
+
+            {view === "entreprises" ? (
+              loading ? null : active.length === 0 ? (
+                <Empty icon={Building2} msg="Aucune entreprise pour l'instant. Créez-en une avec « Créer une entreprise »." />
+              ) : (
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  {active.map((e) => {
+                    const st = SUB_STATUS[e.statut] || SUB_STATUS.actif;
+                    return (
+                      <button key={e.id} onClick={() => openEtb(e)} className="group rounded-xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:border-slate-300 hover:shadow-md">
+                        <div className="flex items-start justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="grid h-10 w-10 place-items-center rounded-lg bg-slate-100 text-slate-500"><Building2 size={18} /></div>
+                            <div>
+                              <div className="font-semibold text-slate-800">{e.nom}</div>
+                              <div className="plex-mono text-xs text-slate-400">{e.code}</div>
+                            </div>
+                          </div>
+                          <ChevronRight size={18} className="text-slate-300 group-hover:text-slate-500" />
+                        </div>
+                        <div className="mt-4 flex flex-wrap items-center gap-2 text-sm">
+                          <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${st.cls}`}>{st.label}</span>
+                          <span className="text-slate-500">{e.nbAcces} accès</span>
+                          <span className="text-slate-300">·</span>
+                          <span className="font-medium text-slate-700">{e.tarifAnnuel != null ? euros(e.tarifAnnuel) + " / an" : "tarif à définir"}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )
+            ) : (
+              loading ? null : demandes.length === 0 ? (
+                <Empty icon={Inbox} msg="Aucune demande d'accès pour l'instant." />
+              ) : (
+                <div className="space-y-3">
+                  {demandes.map((d) => {
+                    const ds = demStatut[d.statut] || demStatut.nouvelle;
+                    return (
+                      <div key={d.id} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold text-slate-800">{d.entreprise || "(sans nom)"}</span>
+                              <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${ds.cls}`}>{ds.label}</span>
+                            </div>
+                            <div className="mt-0.5 text-xs text-slate-400">Reçue le {d.createdAt ? fmtFR(String(d.createdAt).slice(0, 10)) : "—"}</div>
+                          </div>
+                          <span className="text-sm font-medium text-slate-600">{d.nbAcces ? d.nbAcces + " accès souhaité(s)" : ""}</span>
+                        </div>
+                        <div className="mt-3 grid grid-cols-1 gap-1.5 text-sm text-slate-600 sm:grid-cols-2">
+                          <div className="flex items-center gap-2"><CircleUser size={14} className="text-slate-400" /> {d.dirigeant || "—"}</div>
+                          <div className="flex items-center gap-2"><Mail size={14} className="text-slate-400" /> {d.email ? <a href={`mailto:${d.email}`} className="text-teal-700 hover:underline">{d.email}</a> : "—"}</div>
+                          <div className="flex items-center gap-2"><Phone size={14} className="text-slate-400" /> {d.telephone || "—"}</div>
+                        </div>
+                        {d.message && <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">{d.message}</p>}
+                        <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
+                          <button onClick={() => openCreate(d)} className="inline-flex items-center gap-1.5 rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-teal-800"><UserPlus size={14} /> Créer l'entreprise</button>
+                          {d.statut !== "traitee" && <button onClick={() => traiterDemande(d, "traitee")} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50"><Check size={14} /> Marquer traitée</button>}
+                          {d.statut !== "refusee" && <button onClick={() => traiterDemande(d, "refusee")} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-500 hover:bg-slate-50"><X size={14} /> Refuser</button>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )
             )}
           </>
         ) : (
@@ -2923,17 +3018,16 @@ function AdminApp({ onLogout }) {
                             <span className="font-semibold text-slate-800">{sel.nbAcces} accès</span>
                             <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${st.cls}`}>{st.label}</span>
                           </div>
-                          <div className="text-xs text-slate-400">{sel.nbAcces} × {euros(PRIX_PAR_ACCES_MOIS)} par mois</div>
+                          <div className="text-xs text-slate-400">Paiement annuel direct</div>
                         </div>
                       </div>
                       <div className="text-right">
-                        <div className="text-lg font-semibold text-slate-800">{euros(mensuel(sel.nbAcces))}<span className="text-sm font-normal text-slate-400"> / mois</span></div>
+                        <div className="text-lg font-semibold text-slate-800">{sel.tarifAnnuel != null ? euros(sel.tarifAnnuel) : "— €"}<span className="text-sm font-normal text-slate-400"> / an</span></div>
+                        <div className="text-xs text-slate-400">Renouvellement : {sel.renouvellement ? fmtFR(sel.renouvellement) : "non défini"}</div>
                       </div>
                     </div>
-                    {sel.statut === "essai" && (
-                      <div className="mt-4 border-t border-slate-100 pt-4 text-sm text-emerald-700">Essai gratuit jusqu'au <span className="font-medium">{sel.essaiFin ? fmtFR(sel.essaiFin) : "—"}</span> · 1<sup>er</sup> paiement à prévoir : <span className="font-medium text-slate-700">{euros(premierPaiement(sel.nbAcces))}</span></div>
-                    )}
                     <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-4">
+                      <button onClick={openPay} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><Pencil size={15} /> Tarif & renouvellement</button>
                       {sel.statut === "suspendu" ? (
                         <button onClick={() => changeStatut("actif")} className="inline-flex items-center gap-2 rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white hover:bg-teal-800"><Check size={15} /> Réactiver le compte</button>
                       ) : (
@@ -2957,7 +3051,7 @@ function AdminApp({ onLogout }) {
                   <div key={a.id} className="flex items-center justify-between gap-3 border-b border-slate-50 px-4 py-3 text-sm last:border-0">
                     <div className="flex items-center gap-3">
                       <div className="grid h-8 w-8 place-items-center rounded-lg bg-slate-100 text-slate-500"><KeyRound size={15} /></div>
-                      <span className="font-medium text-slate-700">{a.label}</span>
+                      <span className="font-medium text-slate-700">{a.label}{a.gestionnaire && <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800">Gestionnaire</span>}</span>
                     </div>
                     <span className="plex-mono text-xs text-slate-400">Code : {a.code}</span>
                   </div>
@@ -2978,6 +3072,40 @@ function AdminApp({ onLogout }) {
           </>
         )}
       </div>
+
+      {/* modal création d'entreprise */}
+      <Modal open={createOpen} onClose={() => !busy && setCreateOpen(false)} title="Créer une entreprise" wide>
+        <div className="space-y-4">
+          <p className="rounded-lg bg-teal-50 px-3 py-2 text-xs text-teal-800">Vous créez le compte de connexion de l'entreprise et son premier accès gestionnaire. Communiquez ensuite au client : l'email, le mot de passe et le code gestionnaire.</p>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Field label="Nom de l'entreprise"><input value={cf.companyName} onChange={(e) => setC("companyName", e.target.value)} className={inputCls} placeholder="Loca Médical SARL" /></Field>
+            <Field label="Nombre d'accès"><input type="number" min="1" value={cf.nbAcces} onChange={(e) => setC("nbAcces", e.target.value)} className={inputCls} /></Field>
+            <Field label="Email de connexion"><input type="email" value={cf.email} onChange={(e) => setC("email", e.target.value)} className={inputCls} placeholder="contact@entreprise.fr" /></Field>
+            <Field label="Mot de passe" hint="6 caractères minimum."><input value={cf.password} onChange={(e) => setC("password", e.target.value)} className={inputCls} placeholder="à communiquer au client" /></Field>
+            <Field label="Code gestionnaire" hint="Le code du dirigeant pour gérer les accès."><input value={cf.codeGestionnaire} onChange={(e) => setC("codeGestionnaire", e.target.value)} className={`${inputCls} plex-mono tracking-widest`} placeholder="Ex : 4821" /></Field>
+            <Field label="Tarif annuel (€)"><input type="number" min="0" value={cf.tarifAnnuel} onChange={(e) => setC("tarifAnnuel", e.target.value)} className={inputCls} placeholder="Ex : 1200" /></Field>
+            <Field label="Date de renouvellement"><input type="date" value={cf.renouvellement} onChange={(e) => setC("renouvellement", e.target.value)} className={inputCls} /></Field>
+          </div>
+          <div className="flex justify-end gap-2 pt-1">
+            <button onClick={() => setCreateOpen(false)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Annuler</button>
+            <button disabled={busy} onClick={submitCreate} className="inline-flex items-center gap-2 rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40"><UserPlus size={15} /> {busy ? "Création…" : "Créer l'entreprise"}</button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* modal tarif annuel / renouvellement */}
+      {sel && (
+        <Modal open={payOpen} onClose={() => setPayOpen(false)} title="Tarif annuel & renouvellement">
+          <div className="space-y-4">
+            <Field label="Tarif annuel (€)"><input type="number" min="0" autoFocus value={pf.tarifAnnuel} onChange={(e) => setPf((s) => ({ ...s, tarifAnnuel: e.target.value }))} className={inputCls} placeholder="Ex : 1200" /></Field>
+            <Field label="Date de renouvellement"><input type="date" value={pf.renouvellement} onChange={(e) => setPf((s) => ({ ...s, renouvellement: e.target.value }))} className={inputCls} /></Field>
+          </div>
+          <div className="mt-5 flex justify-end gap-2">
+            <button onClick={() => setPayOpen(false)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Annuler</button>
+            <button onClick={submitPay} className="rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white hover:bg-teal-800">Enregistrer</button>
+          </div>
+        </Modal>
+      )}
 
       {sel && (
         <Modal open={delOpen} onClose={() => !busy && setDelOpen(false)} title="Supprimer définitivement l'entreprise">
@@ -3005,50 +3133,62 @@ function AdminApp({ onLogout }) {
 /* ================================================================== *
  *  LOGIN — two-step: establishment code, then personal access code
  * ================================================================== */
+const WEB3FORMS_KEY = "3c7080cf-aa18-4312-9440-f7c5ae1acb3d";
+
 function LoginScreen({ onAuthed }) {
-  const [mode, setMode] = useState("login");   // "login" | "signup" | "forgot"
-  const [company, setCompany] = useState("");
-  const [nbAcces, setNbAcces] = useState(1);
+  const [mode, setMode] = useState("login");   // "login" | "demande" | "forgot"
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [forgotSent, setForgotSent] = useState(false);
 
+  // formulaire "Demander un accès"
+  const [dem, setDem] = useState({ entreprise: "", dirigeant: "", email: "", telephone: "", nbAcces: 1, message: "" });
+  const [demSent, setDemSent] = useState(false);
+  const setD = (k, v) => setDem((s) => ({ ...s, [k]: v }));
+
   const submit = async () => {
+    setError("");
     if (mode === "forgot") {
       if (!email.trim()) return;
-      setBusy(true); setError("");
+      setBusy(true);
       try { await db.sendPasswordReset(email.trim()); setForgotSent(true); }
       catch (e) { setError("Impossible d'envoyer l'email de réinitialisation."); }
       setBusy(false);
       return;
     }
-    setError("");
     if (mode === "login") {
       if (!email.trim() || !password) return;
       setBusy(true);
-      try {
-        await db.signIn(email.trim(), password);
-        if (onAuthed) await onAuthed();
-      } catch (e) {
-        setError("Email ou mot de passe incorrect."); setBusy(false);
-      }
-    } else {
-      if (!company.trim() || !email.trim() || password.length < 6) {
-        setError("Renseignez le nom de l'entreprise, un email et un mot de passe (6 caractères min)."); return;
-      }
-      setBusy(true);
-      try {
-        const res = await db.signUp(company.trim(), email.trim(), password, nbAcces);
-        if (res && res.needsConfirm) {
-          setError("Vérifiez votre email pour confirmer le compte, puis connectez-vous."); setBusy(false); return;
-        }
-        if (onAuthed) await onAuthed();
-      } catch (e) {
-        setError(e.message && e.message.includes("already") ? "Un compte existe déjà avec cet email." : "Impossible de créer le compte : " + (e.message || "")); setBusy(false);
-      }
+      try { await db.signIn(email.trim(), password); if (onAuthed) await onAuthed(); }
+      catch (e) { setError("Email ou mot de passe incorrect."); setBusy(false); }
+      return;
     }
+    // mode === "demande"
+    if (!dem.entreprise.trim() || !dem.dirigeant.trim() || !dem.email.trim()) {
+      setError("Renseignez au moins l'entreprise, le dirigeant et un email de contact."); return;
+    }
+    setBusy(true);
+    try {
+      await db.createDemandeAcces(dem);
+      // notification email (best-effort : ne bloque pas si l'envoi échoue)
+      try {
+        await fetch("https://api.web3forms.com/submit", {
+          method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({
+            access_key: WEB3FORMS_KEY,
+            subject: "MedPark — Nouvelle demande d'accès : " + dem.entreprise,
+            from_name: "MedPark",
+            Entreprise: dem.entreprise, Dirigeant: dem.dirigeant,
+            Email: dem.email, Telephone: dem.telephone,
+            "Nombre d'acces souhaites": dem.nbAcces, Message: dem.message,
+          }),
+        });
+      } catch (e) { /* email best-effort */ }
+      setDemSent(true);
+    } catch (e) { setError("Impossible d'envoyer la demande : " + (e.message || "")); }
+    setBusy(false);
   };
 
   return (
@@ -3057,64 +3197,68 @@ function LoginScreen({ onAuthed }) {
         <div className="mb-6 flex flex-col items-center text-center">
           <div className="mb-3 grid h-12 w-12 place-items-center rounded-xl bg-teal-700 text-white"><Package size={24} /></div>
           <div className="text-lg font-semibold text-slate-800">MedPark</div>
-          <div className="text-sm text-slate-400">{mode === "login" ? "Connexion à votre espace" : mode === "signup" ? "Créer le compte de votre entreprise" : "Réinitialiser votre mot de passe"}</div>
+          <div className="text-sm text-slate-400">{mode === "login" ? "Connexion à votre espace" : mode === "demande" ? "Demander un accès au logiciel" : "Réinitialiser votre mot de passe"}</div>
         </div>
 
         {mode !== "forgot" && (
           <div className="mb-4 flex rounded-lg bg-slate-100 p-0.5 text-sm font-medium">
             <button onClick={() => { setMode("login"); setError(""); }} className={`flex-1 rounded-md px-3 py-1.5 ${mode === "login" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}>Se connecter</button>
-            <button onClick={() => { setMode("signup"); setError(""); }} className={`flex-1 rounded-md px-3 py-1.5 ${mode === "signup" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}>Créer un compte</button>
+            <button onClick={() => { setMode("demande"); setError(""); }} className={`flex-1 rounded-md px-3 py-1.5 ${mode === "demande" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}>Demander un accès</button>
           </div>
         )}
 
         <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          {mode === "signup" && (
-            <Field label="Nom de l'entreprise">
-              <input autoFocus value={company} onChange={(e) => setCompany(e.target.value)} className={inputCls} placeholder="Ex : Loca Médical SARL" />
-            </Field>
-          )}
-          <Field label="Email">
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} placeholder="vous@exemple.fr" />
-          </Field>
-          {mode !== "forgot" && (
-            <Field label="Mot de passe" hint={mode === "signup" ? "6 caractères minimum." : undefined}>
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} className={inputCls} placeholder="••••••••" />
-            </Field>
-          )}
-
-          {mode === "signup" && (
-            <div className="rounded-xl bg-slate-50 p-4">
-              <div className="mb-2 text-sm font-medium text-slate-700">Nombre d'accès</div>
-              <div className="flex items-center gap-3">
-                <button type="button" onClick={() => setNbAcces((n) => Math.max(1, n - 1))} className="grid h-8 w-8 place-items-center rounded-lg border border-slate-200 text-slate-600 hover:bg-white">−</button>
-                <span className="w-8 text-center text-lg font-semibold text-slate-800">{nbAcces}</span>
-                <button type="button" onClick={() => setNbAcces((n) => Math.min(50, n + 1))} className="grid h-8 w-8 place-items-center rounded-lg border border-slate-200 text-slate-600 hover:bg-white">+</button>
-                <span className="text-xs text-slate-400">× {PRIX_PAR_ACCES_MOIS} €/mois par accès</span>
+          {mode === "demande" ? (
+            demSent ? (
+              <div className="text-center">
+                <div className="mx-auto mb-3 grid h-11 w-11 place-items-center rounded-full bg-emerald-50 text-emerald-600"><Check size={22} /></div>
+                <p className="text-sm font-medium text-slate-800">Demande envoyée !</p>
+                <p className="mt-1 text-sm text-slate-500">Merci. Nous revenons vers vous rapidement par email pour la suite et le tarif.</p>
+                <button onClick={() => { setMode("login"); setDemSent(false); setDem({ entreprise: "", dirigeant: "", email: "", telephone: "", nbAcces: 1, message: "" }); }} className="mt-4 text-xs text-slate-500 underline hover:text-slate-700">← Retour à la connexion</button>
               </div>
-              <div className="mt-3 space-y-1 border-t border-slate-200 pt-3 text-sm">
-                <div className="flex items-center justify-between text-emerald-700"><span>{MOIS_ESSAI} premiers mois</span><span className="font-semibold">Gratuit</span></div>
-                <div className="flex items-center justify-between text-slate-600"><span>Ensuite, par mois</span><span className="font-semibold text-slate-800">{euros(mensuel(nbAcces))}</span></div>
-                <div className="flex items-center justify-between text-slate-500"><span>1<sup>er</sup> paiement (licence {euros(LICENCE_UNIQUE)} + 1 mois)</span><span className="font-medium">{euros(premierPaiement(nbAcces))}</span></div>
-              </div>
-            </div>
-          )}
-
-          {mode === "forgot" && forgotSent && (
-            <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">Si un compte existe pour cet email, un lien de réinitialisation vient d'être envoyé. Vérifiez votre boîte mail (et vos spams).</p>
-          )}
-          {error && <p className="text-sm text-rose-600">{error}</p>}
-          {!(mode === "forgot" && forgotSent) && (
-            <button onClick={submit} disabled={busy} className="w-full rounded-lg bg-teal-700 px-4 py-2.5 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40">
-              {busy ? "Veuillez patienter…" : mode === "login" ? "Se connecter" : mode === "signup" ? "Démarrer l'essai gratuit" : "Envoyer le lien"}
-            </button>
-          )}
-          {mode === "login" && (
-            <button onClick={() => { setMode("forgot"); setError(""); setForgotSent(false); }} className="w-full text-center text-xs text-slate-400 hover:text-slate-600">Mot de passe oublié ?</button>
+            ) : (
+              <>
+                <Field label="Nom de l'entreprise"><input autoFocus value={dem.entreprise} onChange={(e) => setD("entreprise", e.target.value)} className={inputCls} placeholder="Ex : Loca Médical SARL" /></Field>
+                <Field label="Nom du dirigeant"><input value={dem.dirigeant} onChange={(e) => setD("dirigeant", e.target.value)} className={inputCls} placeholder="Ex : Jean Dupont" /></Field>
+                <Field label="Email de contact"><input type="email" value={dem.email} onChange={(e) => setD("email", e.target.value)} className={inputCls} placeholder="vous@entreprise.fr" /></Field>
+                <Field label="Téléphone"><input value={dem.telephone} onChange={(e) => setD("telephone", e.target.value)} className={inputCls} placeholder="06 12 34 56 78" /></Field>
+                <Field label="Combien d'accès souhaitez-vous ?">
+                  <div className="flex items-center gap-3">
+                    <button type="button" onClick={() => setD("nbAcces", Math.max(1, dem.nbAcces - 1))} className="grid h-8 w-8 place-items-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">−</button>
+                    <span className="w-8 text-center text-lg font-semibold text-slate-800">{dem.nbAcces}</span>
+                    <button type="button" onClick={() => setD("nbAcces", Math.min(50, dem.nbAcces + 1))} className="grid h-8 w-8 place-items-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">+</button>
+                  </div>
+                  <div className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-500">
+                    <span className="font-medium text-slate-600">Qu'est-ce qu'un accès ?</span> Un accès est un code personnel qui permet à une personne d'utiliser le logiciel (le dirigeant, un magasinier, un commercial…). Chaque personne a le sien. Indiquez le nombre de personnes qui s'en serviront — nous pourrons l'ajuster ensemble.
+                  </div>
+                </Field>
+                <Field label="Message (facultatif)"><textarea value={dem.message} onChange={(e) => setD("message", e.target.value)} rows={2} className={inputCls} placeholder="Votre besoin, vos questions…" /></Field>
+                {error && <p className="text-sm text-rose-600">{error}</p>}
+                <button onClick={submit} disabled={busy} className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-teal-700 px-4 py-2.5 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40"><Send size={15} /> {busy ? "Envoi…" : "Envoyer ma demande"}</button>
+              </>
+            )
+          ) : (
+            <>
+              <Field label="Email"><input type="email" autoFocus value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} placeholder="vous@exemple.fr" /></Field>
+              {mode !== "forgot" && (
+                <Field label="Mot de passe"><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} className={inputCls} placeholder="••••••••" /></Field>
+              )}
+              {mode === "forgot" && forgotSent && (
+                <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">Si un compte existe pour cet email, un lien de réinitialisation vient d'être envoyé. Vérifiez votre boîte mail (et vos spams).</p>
+              )}
+              {error && <p className="text-sm text-rose-600">{error}</p>}
+              {!(mode === "forgot" && forgotSent) && (
+                <button onClick={submit} disabled={busy} className="w-full rounded-lg bg-teal-700 px-4 py-2.5 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40">{busy ? "Veuillez patienter…" : mode === "login" ? "Se connecter" : "Envoyer le lien"}</button>
+              )}
+              {mode === "login" && (
+                <button onClick={() => { setMode("forgot"); setError(""); setForgotSent(false); }} className="w-full text-center text-xs text-slate-400 hover:text-slate-600">Mot de passe oublié ?</button>
+              )}
+            </>
           )}
         </div>
         <p className="mt-4 text-center text-[11px] leading-relaxed text-slate-400">
-          {mode === "login" ? "Pas encore de compte ? Cliquez sur « Créer un compte »."
-            : mode === "signup" ? `Aucun paiement maintenant — essai gratuit de ${MOIS_ESSAI} mois.`
+          {mode === "login" ? "Pas encore client ? Cliquez sur « Demander un accès »."
+            : mode === "demande" ? "Un accès est ouvert manuellement après étude de votre demande."
             : <button onClick={() => { setMode("login"); setError(""); setForgotSent(false); }} className="text-slate-500 underline hover:text-slate-700">← Retour à la connexion</button>}
         </p>
       </div>
