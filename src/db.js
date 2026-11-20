@@ -1,4 +1,4 @@
-import { supabase } from "./supabaseClient.js";
+import { supabase, createScopedClient } from "./supabaseClient.js";
 
 // Toutes les sections du logiciel (droits par défaut d'un nouveau compte entreprise).
 const ALL_SECTIONS = ["reservations", "agenda", "tiers", "inventaire", "maintenance", "stats", "transport"];
@@ -530,6 +530,38 @@ export async function supprimerMonCompte() {
 }
 
 /* ------------------------------------------------------------------ *
+ *  DEMANDES D'ACCÈS (formulaire public) : un visiteur dépose une demande,
+ *  l'admin la retrouve dans sa console (et reçoit un email, géré côté appli).
+ * ------------------------------------------------------------------ */
+
+// Dépose une demande d'accès (accessible sans être connecté).
+export async function createDemandeAcces(f) {
+  const { error } = await supabase.from("demandes_acces").insert({
+    entreprise: f.entreprise || null, dirigeant: f.dirigeant || null,
+    email: f.email || null, telephone: f.telephone || null,
+    nb_acces: f.nbAcces ? Number(f.nbAcces) : null, message: f.message || null,
+  });
+  if (error) throw error;
+}
+
+// Liste les demandes reçues (réservé à l'admin).
+export async function listDemandes() {
+  const { data, error } = await supabase.from("demandes_acces").select("*").order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data || []).map((d) => ({
+    id: d.id, createdAt: d.created_at, entreprise: d.entreprise || "", dirigeant: d.dirigeant || "",
+    email: d.email || "", telephone: d.telephone || "", nbAcces: d.nb_acces || null,
+    message: d.message || "", statut: d.statut || "nouvelle",
+  }));
+}
+
+// Change le statut d'une demande : "nouvelle" | "traitee" | "refusee".
+export async function setDemandeStatut(id, statut) {
+  const { error } = await supabase.from("demandes_acces").update({ statut }).eq("id", id);
+  if (error) throw error;
+}
+
+/* ------------------------------------------------------------------ *
  *  ADMIN (toi) : voir toutes les entreprises inscrites et leurs accès.
  * ------------------------------------------------------------------ */
 export async function listEtablissementsAdmin() {
@@ -538,8 +570,53 @@ export async function listEtablissementsAdmin() {
   return (data || []).map((r) => ({
     id: r.id, nom: r.nom, identifiant: r.identifiant || "", code: r.code || "",
     nbAcces: r.nb_acces || 1, statut: r.abo_statut || "essai", essaiFin: r.essai_fin || null,
+    tarifAnnuel: r.tarif_annuel != null ? Number(r.tarif_annuel) : null,
+    renouvellement: r.date_renouvellement || null,
     archived: !!r.archived,
   }));
+}
+
+// Admin : crée une entreprise de A à Z (compte de connexion + 1er accès
+// gestionnaire) sans toucher à la session de l'admin (client jetable).
+export async function adminCreerEntreprise({ companyName, email, password, nbAcces, codeGestionnaire, tarifAnnuel, renouvellement }) {
+  const tmp = createScopedClient();
+  try {
+    const { data, error } = await tmp.auth.signUp({ email, password });
+    if (error) throw error;
+    if (!data.session) throw new Error("Désactivez « Confirm email » dans Supabase pour pouvoir créer les comptes.");
+    const etbId = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : undefined;
+    const base = (companyName || "entreprise").toLowerCase().normalize("NFD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30) || "entreprise";
+    const slug = base + "-" + Math.random().toString(36).slice(2, 6);
+    const code = "ETB-" + Math.floor(1000 + Math.random() * 8999);
+    const { error: e2 } = await tmp.from("etablissements").insert({
+      id: etbId, nom: companyName, identifiant: slug, code, archived: false,
+      nb_acces: nbAcces || 1, abo_statut: "actif",
+      tarif_annuel: tarifAnnuel != null && tarifAnnuel !== "" ? Number(tarifAnnuel) : null,
+      date_renouvellement: renouvellement || null,
+    });
+    if (e2) throw e2;
+    const { error: e3 } = await tmp.from("membres").insert({
+      user_id: data.user.id, role: "client", etablissement_id: etbId, sections: ALL_SECTIONS, label: companyName,
+    });
+    if (e3) throw e3;
+    const identA = base.slice(0, 20) + "-" + Math.random().toString(36).slice(2, 5);
+    const { error: e4 } = await tmp.from("acces").insert({
+      etablissement_id: etbId, nom: "Gestionnaire", code: String(codeGestionnaire || "").trim(),
+      identifiant: identA, droits: ALL_SECTIONS, archived: false, gestionnaire: true,
+    });
+    if (e4) throw e4;
+  } finally {
+    try { await tmp.auth.signOut(); } catch (e) {}
+  }
+}
+
+// Admin : enregistre le tarif annuel et la date de renouvellement d'une entreprise.
+export async function setEtbPaiement(etbId, tarifAnnuel, renouvellement) {
+  const { error } = await supabase.from("etablissements").update({
+    tarif_annuel: tarifAnnuel != null && tarifAnnuel !== "" ? Number(tarifAnnuel) : null,
+    date_renouvellement: renouvellement || null,
+  }).eq("id", etbId);
+  if (error) throw error;
 }
 
 export async function listAccesForEtb(etbId) {
