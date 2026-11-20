@@ -6,3 +6,11 @@ const SUPABASE_URL = "https://onboyxjrehfhpjlniavw.supabase.co";
 const SUPABASE_KEY = "sb_publishable_IQshB0U1Q4Ra-BcPC25UNA_NZNWHeQY";
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// Client "jetable" isolé : sert à l'admin pour créer une entreprise (nouveau
+// compte de connexion) SANS remplacer la session de l'admin lui-même.
+export function createScopedClient() {
+  return createClient(SUPABASE_URL, SUPABASE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false, storageKey: "sb-temp-" + Math.random().toString(36).slice(2) },
+  });
+}
