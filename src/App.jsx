@@ -586,7 +586,7 @@ function ResList({ notify, go, onEditDraft }) {
         </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[600px] text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-400">
               <tr>
                 <th className="px-4 py-3 font-medium">Statut</th>
@@ -1067,7 +1067,7 @@ function ResArchive({ notify }) {
       <PageTitle title="Réservations archivées" sub={loading ? "Chargement depuis la base…" : "Jamais supprimées — toujours consultables."} />
       {loading ? null : rows.length === 0 ? <Empty icon={Archive} msg="Aucune réservation archivée." /> : (
         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[600px] text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-400">
               <tr>{["Code", "Produit", "Patient", "Période", "Retour", ""].map((h, i) => <th key={i} className="px-4 py-3 font-medium">{h}</th>)}</tr>
             </thead>
@@ -1866,7 +1866,7 @@ function Inventaire({ notify }) {
                 <div className="rounded-xl border border-dashed border-slate-200 py-6 text-center text-sm text-slate-400">Aucun matériel dans cet entrepôt.</div>
               ) : (
                 <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-                  <table className="w-full text-sm">
+                  <table className="w-full min-w-[600px] text-sm">
                     <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-400">
                       <tr>
                         <th className="px-4 py-2.5 font-medium">Matériel</th>
@@ -2024,7 +2024,7 @@ function Maintenance({ notify, mode }) {
         <Empty icon={Check} msg="Aucun matériel à réviser ou réparer. Tout est à jour." />
       ) : (
         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[600px] text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-400">
               <tr>
                 <th className="px-4 py-3 font-medium">Matériel</th>
@@ -2183,7 +2183,7 @@ function Magasinier({ notify }) {
         <Empty icon={Truck} msg="Aucun mouvement à préparer." />
       ) : (
         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[600px] text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-400">
               <tr>
                 <th className="px-4 py-3 font-medium">Date</th>
@@ -2299,7 +2299,7 @@ function Stats({ notify }) {
         <h3 className="mb-1 text-sm font-semibold text-slate-800">Aide au renouvellement</h3>
         <p className="mb-4 text-xs text-slate-400">Les matériels les plus sollicités (usure la plus rapide) sont les premiers candidats au renouvellement.</p>
         <div className="overflow-x-auto rounded-lg border border-slate-100">
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[600px] text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-400">
               <tr><th className="px-4 py-2.5 font-medium">Matériel</th><th className="px-4 py-2.5 font-medium">Locations</th><th className="px-4 py-2.5 font-medium">Prix d'achat</th></tr>
             </thead>
@@ -3473,17 +3473,17 @@ function ManagerSpace({ establishmentName, onOpenApp, onSwitch, onLogout }) {
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-slate-50">
-      <header className="flex items-center gap-3 border-b border-slate-200 bg-white px-5 py-3">
+      <header className="flex flex-wrap items-center gap-3 border-b border-slate-200 bg-white px-4 py-3 md:px-5">
         <div className="grid h-9 w-9 place-items-center rounded-lg bg-teal-700 text-white"><Package size={18} /></div>
         <div className="min-w-0">
           <div className="text-sm font-semibold leading-tight text-slate-800">MedPark</div>
           <div className="truncate text-[11px] font-medium text-teal-700">{establishmentName}</div>
         </div>
-        <div className="ml-6 flex rounded-lg bg-slate-100 p-0.5 text-sm font-medium">
+        <div className="flex rounded-lg bg-slate-100 p-0.5 text-sm font-medium md:ml-6">
           <button onClick={() => setTab("acces")} className={`rounded-md px-3 py-1.5 ${tab === "acces" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}>Mes accès</button>
           <button onClick={() => setTab("abonnement")} className={`rounded-md px-3 py-1.5 ${tab === "abonnement" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}>Mon abonnement</button>
         </div>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex flex-wrap items-center gap-2">
           <button onClick={onOpenApp} disabled={suspendu} className="inline-flex items-center gap-1.5 rounded-lg bg-teal-700 px-3 py-1.5 text-sm font-medium text-white enabled:hover:bg-teal-800 disabled:opacity-40"><ArrowRight size={15} /> Ouvrir le logiciel</button>
           <button onClick={onSwitch} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50"><KeyRound size={15} /> Changer d'accès</button>
           <button onClick={onLogout} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50"><LogOut size={15} /> Se déconnecter</button>
