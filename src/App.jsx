@@ -307,7 +307,8 @@ function MainApp({ store, setStore, access, mode, onExit }) {
 
   const [open, setOpen] = useState(() => Object.fromEntries(NAV.map((s) => [s.id, true])));
   const [view, setView] = useState(NAV[0]?.subs[0]?.id || "res-list");
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() => (typeof window === "undefined" ? true : window.innerWidth >= 768));
+  const closeOnMobile = () => { if (typeof window !== "undefined" && window.innerWidth < 768) setSidebarOpen(false); };
   const [toast, setToast] = useState(null);
   const [resDraft, setResDraft] = useState(null);   // brouillon de réservation en cours d'édition
 
@@ -332,8 +333,10 @@ function MainApp({ store, setStore, access, mode, onExit }) {
 
   return (
     <div className="flex h-full min-h-0 w-full overflow-hidden bg-slate-50">
-      {/* Sidebar */}
-      <aside className={`${sidebarOpen ? "flex" : "hidden"} w-64 shrink-0 flex-col border-r border-slate-200 bg-white`}>
+      {/* Fond sombre quand le menu est ouvert sur mobile */}
+      {sidebarOpen && <div className="fixed inset-0 z-30 bg-slate-900/40 md:hidden" onClick={() => setSidebarOpen(false)} />}
+      {/* Menu latéral — tiroir sur mobile, fixe sur ordinateur */}
+      <aside className={`fixed inset-y-0 left-0 z-40 w-72 max-w-[85%] flex-col border-r border-slate-200 bg-white md:static md:z-auto md:w-64 md:max-w-none md:shrink-0 ${sidebarOpen ? "flex" : "hidden"}`}>
         <div className="flex items-center gap-2.5 border-b border-slate-100 px-5 py-4">
           <div className="grid h-9 w-9 place-items-center rounded-lg bg-teal-700 text-white">
             <Package size={18} />
@@ -352,7 +355,7 @@ function MainApp({ store, setStore, access, mode, onExit }) {
               <div key={sec.id}>
                 <div className={`flex items-center rounded-lg ${activeSec ? "bg-teal-50" : "hover:bg-slate-50"}`}>
                   <button
-                    onClick={() => { setOpen((o) => ({ ...o, [sec.id]: true })); setView(sec.subs[0].id); }}
+                    onClick={() => { setOpen((o) => ({ ...o, [sec.id]: true })); setView(sec.subs[0].id); closeOnMobile(); }}
                     className={`flex flex-1 items-center gap-3 rounded-l-lg px-3 py-2 text-left text-sm font-medium ${activeSec ? "text-teal-800" : "text-slate-700"}`}>
                     <Icon size={17} className={activeSec ? "text-teal-600" : "text-slate-400"} />
                     <span className="flex-1">{sec.label}</span>
@@ -369,7 +372,7 @@ function MainApp({ store, setStore, access, mode, onExit }) {
                     {sec.subs.map((sub) => (
                       <button
                         key={sub.id}
-                        onClick={() => { if (sub.id === "res-new") setResDraft(null); setView(sub.id); }}
+                        onClick={() => { if (sub.id === "res-new") setResDraft(null); setView(sub.id); closeOnMobile(); }}
                         className={`block w-full rounded-md px-3 py-1.5 text-left text-[13px] ${view === sub.id ? "bg-teal-50 font-medium text-teal-800" : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"}`}>
                         {sub.label}
                       </button>
@@ -463,7 +466,7 @@ function PageTitle({ title, sub, action }) {
 function ResList({ notify, go, onEditDraft }) {
   const [q, setQ] = useState("");
   const [sort, setSort] = useState("date");
-  const [viewMode, setViewMode] = useState("list");
+  const [viewMode, setViewMode] = useState(() => (typeof window !== "undefined" && window.innerWidth < 768) ? "grid" : "list");
   const [scanOpen, setScanOpen] = useState(false);
   const [detail, setDetail] = useState(null);
   const [vue, setVue] = useState("actives");   // actives | brouillons
@@ -582,7 +585,7 @@ function ResList({ notify, go, onEditDraft }) {
           ))}
         </div>
       ) : (
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-400">
               <tr>
@@ -731,7 +734,7 @@ function ResDetail({ res, onClose, onEnd, onArchive, store, helpers }) {
             </div>
             <div className="text-right text-xs text-slate-400">Émis le {fmtFR(TODAY)}</div>
           </div>
-          <div className="grid grid-cols-2 gap-4 text-sm">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
             <div><div className="text-xs uppercase tracking-wide text-slate-400">Matériel</div><div className="font-medium text-slate-800">{productName(res.product)}</div></div>
             <div><div className="text-xs uppercase tracking-wide text-slate-400">N° de parc</div><div className="plex-mono text-slate-700">{prod?.numParc || "—"} · série {prod?.numSerie || "—"}</div></div>
             <div><div className="text-xs uppercase tracking-wide text-slate-400">Livré à</div><div className="font-medium text-slate-800">{patientName(res.patient)}</div><div className="text-slate-500">{pat?.address || "Adresse non renseignée"}</div></div>
@@ -931,7 +934,7 @@ function ResNew({ notify, go, draft, onDone }) {
               </ul>
             </div>
           )}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Field label="Date de début"><input type="date" value={f.start} onChange={(e) => set("start", e.target.value)} className={inputCls} /></Field>
             <Field label="Date de fin"><input type="date" value={f.end} onChange={(e) => set("end", e.target.value)} className={inputCls} /></Field>
           </div>
@@ -957,7 +960,7 @@ function ResNew({ notify, go, draft, onDone }) {
               </div>
             </div>
           )}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Field label="Patient / Client">
               <div className="flex gap-2">
                 <select value={f.patient} onChange={(e) => set("patient", e.target.value)} className={inputCls}>
@@ -1063,7 +1066,7 @@ function ResArchive({ notify }) {
     <div>
       <PageTitle title="Réservations archivées" sub={loading ? "Chargement depuis la base…" : "Jamais supprimées — toujours consultables."} />
       {loading ? null : rows.length === 0 ? <Empty icon={Archive} msg="Aucune réservation archivée." /> : (
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-400">
               <tr>{["Code", "Produit", "Patient", "Période", "Retour", ""].map((h, i) => <th key={i} className="px-4 py-3 font-medium">{h}</th>)}</tr>
@@ -1682,7 +1685,7 @@ function Navettes({ notify }) {
 
       <Modal open={open} onClose={() => setOpen(false)} title="Nouvelle navette">
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Entrepôt A">
               <select value={f.a} onChange={(e) => setF((s) => ({ ...s, a: e.target.value }))} className={inputCls}>
                 <option value="">Sélectionner…</option>
@@ -1862,7 +1865,7 @@ function Inventaire({ notify }) {
               {items.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-slate-200 py-6 text-center text-sm text-slate-400">Aucun matériel dans cet entrepôt.</div>
               ) : (
-                <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+                <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
                   <table className="w-full text-sm">
                     <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-400">
                       <tr>
@@ -2020,7 +2023,7 @@ function Maintenance({ notify, mode }) {
       {mode === "revisions" && alerts.length === 0 ? (
         <Empty icon={Check} msg="Aucun matériel à réviser ou réparer. Tout est à jour." />
       ) : (
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-400">
               <tr>
@@ -2179,7 +2182,7 @@ function Magasinier({ notify }) {
       {list.length === 0 ? (
         <Empty icon={Truck} msg="Aucun mouvement à préparer." />
       ) : (
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-400">
               <tr>
@@ -2295,7 +2298,7 @@ function Stats({ notify }) {
       <div className="mt-6 rounded-xl border border-slate-200 bg-white p-5">
         <h3 className="mb-1 text-sm font-semibold text-slate-800">Aide au renouvellement</h3>
         <p className="mb-4 text-xs text-slate-400">Les matériels les plus sollicités (usure la plus rapide) sont les premiers candidats au renouvellement.</p>
-        <div className="overflow-hidden rounded-lg border border-slate-100">
+        <div className="overflow-x-auto rounded-lg border border-slate-100">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-400">
               <tr><th className="px-4 py-2.5 font-medium">Matériel</th><th className="px-4 py-2.5 font-medium">Locations</th><th className="px-4 py-2.5 font-medium">Prix d'achat</th></tr>
@@ -2768,7 +2771,7 @@ function Transport({ notify, archived }) {
               {store.products.filter((p) => !p.archived).map((p) => <option key={p.id} value={p.id}>{p.name} (actuellement {whName(p.warehouse)})</option>)}
             </select>
           </Field>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Entrepôt de départ">
               <select value={f.from} onChange={(e) => setF((s) => ({ ...s, from: e.target.value }))} className={inputCls}>
                 <option value="">…</option>{store.warehouses.filter((w) => !w.archived).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
